@@ -1,0 +1,199 @@
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { Script } from "../lib/script";
+import { Diagram } from "./Diagram";
+import { Words } from "./Words";
+import { EditableLine } from "./EditableLine";
+
+interface Props {
+  script: Script;
+  startAt: number;
+  onEdit: (index: number, source: string) => void;
+}
+
+const EYE_LINE = 140; // px from the top of the prompter: just under the camera
+
+/**
+ * Full-screen prompter. Milestone 1 simulates the voice with a steady reading pace;
+ * milestone 2 replaces the timer with whisper.cpp + the live aligner.
+ */
+export function Record({ script, startAt, onEdit }: Props) {
+  const S = script.sentences;
+  const offsets = useMemo(() => {
+    const o: number[] = []; let n = 0;
+    for (const s of S) { o.push(n); n += s.tokens.filter(t => t.type === "word").length; }
+    return { first: o, total: n };
+  }, [S]);
+  const sentenceOf = useCallback((w: number) => {
+    let i = 0; while (i + 1 < S.length && offsets.first[i + 1] <= w) i++; return i;
+  }, [S, offsets]);
+  const wordAt = (w: number) => {
+    const s = S[sentenceOf(w)]; const words = s.tokens.filter(t => t.type === "word");
+    return (words[w - offsets.first[s.index]] as { text: string } | undefined)?.text ?? "";
+  };
+
+  const [cur, setCur] = useState(() => ({ s: startAt, w: (offsets.first[startAt] ?? 0) - 1 }));
+  const [live, setLive] = useState(false);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [pausesDone, setPausesDone] = useState<Set<number>>(new Set());
+  const [pausing, setPausing] = useState<number | null>(null);
+  const [recT, setRecT] = useState(0);
+  const [take, setTake] = useState(1);
+  const [mirror, setMirror] = useState(false);
+  const [fs, setFs] = useState(46);
+  const [toastMsg, setToastMsg] = useState("");
+  const [levels, setLevels] = useState<number[]>(Array(16).fill(0));
+  const [wpm, setWpm] = useState(0);
+  const phase = useRef(0);
+  const promptRef = useRef<HTMLDivElement>(null);
+
+  const toast = useCallback((m: string) => setToastMsg(m), []);
+  useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(""), 2800); return () => clearTimeout(t); }, [toastMsg]);
+
+  // Start position from Review's "Redo"
+  useEffect(() => { setCur({ s: startAt, w: (offsets.first[startAt] ?? 0) - 1 }); }, [startAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Simulated voice: advance one word at a time at a natural pace.
+  useEffect(() => {
+    if (!live || editing !== null) return;
+    const next = cur.w + 1;
+    if (next >= offsets.total) { setLive(false); toast(`Take ${take} complete · ${S.length} of ${S.length} sentences`); return; }
+    const nextS = sentenceOf(next);
+    const p = S[cur.s]?.pause;
+    if (cur.w >= 0 && nextS !== cur.s && p && !pausesDone.has(cur.s)) {
+      setPausing(cur.s);
+      const t = setTimeout(() => { setPausing(null); setPausesDone(d => new Set(d).add(cur.s)); }, p * 1000);
+      return () => clearTimeout(t);
+    }
+    phase.current += 0.18;
+    const pace = 150 + Math.sin(phase.current) * 20;
+    const delay = 60000 / pace + (/,$/.test(wordAt(cur.w)) ? 260 : 0);
+    const t = setTimeout(() => setCur({ w: next, s: nextS }), cur.w < 0 ? 300 : delay);
+    return () => clearTimeout(t);
+  }, [live, cur, editing, pausesDone]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Recording clock and meters
+  useEffect(() => {
+    if (!live) { setLevels(Array(16).fill(0)); setWpm(0); return; }
+    const clock = setInterval(() => setRecT(t => t + 1), 1000);
+    const meter = setInterval(() => {
+      const amp = pausing !== null ? 0.05 : 0.45 + Math.random() * 0.5;
+      setLevels(Array.from({ length: 16 }, (_, i) => (i / 16 < amp ? 1 : 0)));
+      setWpm(pausing !== null ? 0 : Math.round(150 + Math.sin(phase.current) * 20));
+    }, 140);
+    return () => { clearInterval(clock); clearInterval(meter); };
+  }, [live, pausing]);
+
+  // Keep the current sentence on the eye line
+  useLayoutEffect(() => {
+    const el = promptRef.current?.querySelector<HTMLElement>(`.pl[data-s="${cur.s}"]`);
+    if (el && promptRef.current) promptRef.current.style.transform = `translateY(${EYE_LINE - el.offsetTop}px)`;
+  }, [cur.s, fs, S, editing]);
+
+  const startEdit = useCallback((i: number) => { setLive(false); setPausing(null); setEditing(i); }, []);
+  const saveEdit = (i: number, v: string) => {
+    onEdit(i, v);
+    setEditing(null);
+    setCur({ s: i, w: (offsets.first[i] ?? 0) - 1 });
+    toast(`Saved to the script · press Space to go on from sentence ${i + 1}`);
+  };
+  const back = useCallback(() => {
+    const atStart = cur.w <= offsets.first[cur.s];
+    const s = Math.max(0, cur.s - (atStart ? 1 : 0));
+    setCur({ s, w: offsets.first[s] - 1 });
+    setPausesDone(d => { const n = new Set(d); n.delete(s); return n; });
+    toast(`Back to sentence ${s + 1}`);
+  }, [cur, offsets, toast]);
+  const restart = () => {
+    setLive(false); setCur({ s: 0, w: -1 }); setRecT(0); setPausesDone(new Set()); setPausing(null); setTake(t => t + 1);
+  };
+  const jump = (s: number) => { setCur({ s, w: offsets.first[s] - 1 }); };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (editing !== null || (e.target as HTMLElement).tagName === "INPUT") return;
+      if (e.code === "Space") { e.preventDefault(); setLive(l => !l); }
+      else if (e.key === "ArrowLeft") back();
+      else if (e.key === "e" || e.key === "E") { e.preventDefault(); startEdit(cur.s); }
+      else if (e.key === "m" || e.key === "M") setMirror(m => !m);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editing, back, startEdit, cur.s]);
+
+  const step = S.slice(0, cur.s + 1).reduce((a, s) => s.step ?? a, 0);
+  const maxStep = Math.max(0, ...S.map(s => s.step ?? 0));
+  const pos = Math.max(2, Math.min(98, ((wpm - 90) / 120) * 100));
+  const mmss = `${String(Math.floor(recT / 60)).padStart(2, "0")}:${String(recT % 60).padStart(2, "0")}`;
+
+  return (
+    <section className="screen on" id="record">
+      <div className={"stage" + (live ? " live" : "") + (mirror ? " mirrored" : "")}>
+        <div className="notch" aria-hidden="true"><span className="lens" /></div>
+        <div className="eyeline" aria-hidden="true" />
+        <div className={"toast" + (toastMsg ? " show" : "")} role="status"><span className="dot" /><span>{toastMsg}</span></div>
+        {editing !== null && <div className="edit-hint">Editing sentence {editing + 1} · <kbd>Enter</kbd> save · <kbd>Esc</kbd> cancel · use **word** for stress and / for a breath</div>}
+        <div className="prompt-viewport">
+          <div className="prompt" ref={promptRef} style={{ ["--fs" as string]: fs + "px" }}>
+            {S.map(s => {
+              const rel = s.index < cur.s ? "past" : s.index === cur.s ? "cur" : s.index === cur.s + 1 ? "next" : "later";
+              return (
+                <p key={s.index} className={`pl k-${s.kind} ${rel}${editing === s.index ? " editing" : ""}`} data-s={s.index}
+                   onClick={() => editing === null && startEdit(s.index)} title="Click to edit this sentence">
+                  {editing === s.index
+                    ? <EditableLine value={s.source} onSave={v => saveEdit(s.index, v)} onCancel={() => setEditing(null)} />
+                    : <>
+                        <Words s={s} wordClass="w" offset={offsets.first[s.index]} said={s.index === cur.s ? cur.w : -1} now={s.index === cur.s ? cur.w : -1} />
+                        {s.pause && <span className="cue"><span className="fill" style={pausing === s.index ? { width: "100%", transition: `width ${s.pause}s linear` } : pausesDone.has(s.index) ? { width: "100%" } : undefined} /><span>⏸ {s.pause}s</span></span>}
+                        {s.step && <span className="oncue">◆ step {s.step}</span>}
+                      </>}
+                </p>
+              );
+            })}
+          </div>
+        </div>
+        <div className="strip">
+          <div className="cam"><span className="rec"><i />{mmss}</span></div>
+          <div className="meters">
+            <div className="meter"><span className="label">Mic</span>
+              <div className="level">{levels.map((on, i) => { const f = i / 16; return <i key={i} className={on ? (f > 0.85 ? "x" : f > 0.65 ? "h" : "") : ""} style={{ height: on ? 6 + f * 16 : 3, opacity: on ? 1 : 0.25 }} />; })}</div>
+            </div>
+            <div className="meter"><span className="label">Pace · {!wpm ? "idle" : wpm > 175 ? "too fast" : wpm < 120 ? "slow" : "good"}</span><div className="speed"><b style={{ left: (wpm ? pos : 2) + "%" }} /></div></div>
+            <div className="meter"><span className="label">Words / min</span><span className="mono big">{wpm || "—"}</span></div>
+            <div className="meter"><span className="label">Take</span><span className="mono big">{take}</span></div>
+            <span className="sim">voice simulated</span>
+          </div>
+          <div className="ctrls">
+            <button className="btn ghost" onClick={back} title="Back one sentence (←)">↶ Back</button>
+            <button className="recbtn" onClick={() => setLive(l => !l)} aria-label="Start or stop recording (Space)"><i /></button>
+            <button className="btn ghost" onClick={restart} title="Restart from the top">⟲ Restart</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="side">
+        <div className="panel">
+          <div className="ph"><h2>Live diagram</h2><span className="meta">step {step} / {maxStep}</span></div>
+          <div className="mini"><div className="slide"><Diagram upTo={step} ghost /></div></div>
+        </div>
+        <div className="panel">
+          <div className="ph"><h2>Prompter</h2></div>
+          <div className="mini">
+            <label className="row" htmlFor="mirror">Mirror for glass <input type="checkbox" className="switch" id="mirror" checked={mirror} onChange={e => setMirror(e.target.checked)} /></label>
+            <label className="row" htmlFor="fs">Text size <input type="range" id="fs" min={30} max={64} value={fs} onChange={e => setFs(+e.target.value)} /></label>
+            <div className="row">Shortcuts <span><kbd>Space</kbd> <kbd>←</kbd> <kbd>E</kbd> <kbd>M</kbd></span></div>
+          </div>
+        </div>
+        <div className="panel">
+          <div className="ph"><h2>Sentences</h2><span className="meta">{S.length} total</span></div>
+          <div className="mini"><div className="sent-list">
+            {S.map(s => (
+              <div key={s.index} className={s.index < cur.s ? "done" : s.index === cur.s ? "cur" : ""} onClick={() => jump(s.index)} style={{ cursor: "pointer" }}>
+                <span>{s.index + 1}</span><span>{s.spoken.length > 48 ? s.spoken.slice(0, 48) + "…" : s.spoken}</span>
+              </div>
+            ))}
+          </div></div>
+        </div>
+      </div>
+    </section>
+  );
+}
