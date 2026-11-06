@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { Script } from "../lib/script";
-import { wordCount } from "../lib/script";
-import { Diagram } from "./Diagram";
+import { wordCount, estimateSeconds } from "../lib/script";
+import { ScreenCard } from "./ScreenCard";
 import { Words } from "./Words";
 import { EditableLine } from "./EditableLine";
 
@@ -20,8 +20,8 @@ export function Prepare({ script, fileName, saved, onOpen, onEdit, onRecord }: P
   const S = script.sentences;
   const words = wordCount(script);
   const pauses = S.reduce((a, s) => a + (s.pause ?? 0), 0);
-  const secs = Math.round((words / 145) * 60 + pauses);
-  const steps = S.filter(s => s.step).map(s => ({ n: s.step!, at: s.index }));
+  const secs = estimateSeconds(script);
+  const steps = S.filter(s => s.step).map(s => ({ n: s.step!, at: s.index, text: s.screen }));
   const maxStep = Math.max(0, ...steps.map(s => s.n));
 
   const pickStep = (n: number) => {
@@ -50,21 +50,27 @@ export function Prepare({ script, fileName, saved, onOpen, onEdit, onRecord }: P
           <span><b>{S.length}</b> sentences</span>
           <span><b>{words}</b> words</span>
           <span><b>{steps.length}</b> diagram steps</span>
-          <span><b>{pauses}s</b> of pauses</span>
-          <span>about <b>{Math.floor(secs / 60)}:{String(secs % 60).padStart(2, "0")}</b> at 145 wpm</span>
+          <span><b>{Math.round(pauses)}s</b> of pauses</span>
+          {script.sections.length > 0 && <span><b>{script.sections.length}</b> parts</span>}
+          <span>about <b>{Math.floor(secs / 60)}:{String(secs % 60).padStart(2, "0")}</b> at {script.wpm} wpm</span>
         </div>
-        <div className="legend">
+        {!script.tagged ? <div className="legend">
+          <span><i style={{ background: "#8fb2ff" }} />Navy</span>
+          <span><i style={{ background: "#ffa266" }} />Orange</span>
+          <span>Each sentence alternates colour, as in your reading scripts</span>
+        </div> : <div className="legend">
           <span><i style={{ background: "var(--k-intro)" }} />Intro</span>
           <span><i style={{ background: "var(--k-key)" }} />Key point</span>
           <span><i style={{ background: "var(--k-def)" }} />Definition</span>
           <span><i style={{ background: "var(--k-ex)" }} />Example</span>
           <span><i style={{ background: "var(--k-tr)" }} />Transition</span>
-        </div>
+        </div>}
         <div className="script">
           {S.map(s => {
             const n = s.tokens.filter(t => t.type === "word").length;
             return (
               <div key={s.index}>
+                {s.section && s.section !== S[s.index - 1]?.section && <div className="sec-head">{s.section}</div>}
                 <div className={"sent" + (focusStep && s.step === focusStep ? " hl" : "")} id={"s-" + s.index}>
                   <span className="no">{String(s.index + 1).padStart(2, "0")}</span>
                   <div className={"tx k-" + s.kind} onClick={() => setEditing(s.index)}>
@@ -73,12 +79,12 @@ export function Prepare({ script, fileName, saved, onOpen, onEdit, onRecord }: P
                       : <Words s={s} />}
                   </div>
                   <div className="side">
-                    {s.step && <span className="pill step" onClick={() => pickStep(s.step!)}>ON SCREEN · step {s.step}</span>}
+                    {s.step && <span className="pill step" title={s.screen} onClick={() => pickStep(s.step!)}>ON SCREEN · {s.step}</span>}
                     {s.notes.map((x, i) => <span key={i} className="pill">{x}</span>)}
                     {s.pause && <span className="pill pause">pause {s.pause}s</span>}
                   </div>
                 </div>
-                {n > 20 && <div className="warn">Sentence {s.index + 1} is long ({n} words). It may be hard to read aloud.</div>}
+                {n > 25 && <div className="warn">Sentence {s.index + 1} is long ({n} words). It may be hard to read aloud.</div>}
               </div>
             );
           })}
@@ -86,14 +92,14 @@ export function Prepare({ script, fileName, saved, onOpen, onEdit, onRecord }: P
       </div>
 
       <aside className="panel">
-        <div className="ph"><h2>Slides</h2><span className="meta">sample diagram</span></div>
+        <div className="ph"><h2>On screen</h2><span className="meta">{steps.length} steps</span></div>
         <div className="slide-wrap">
-          <div className="slide"><Diagram upTo={focusStep ?? maxStep} ghost={focusStep !== null} /></div>
+          <div className="slide"><ScreenCard script={script} step={focusStep ?? (script.tagged ? maxStep : 1)} ghost={focusStep !== null} /></div>
           <span className="label">Diagram steps · click to find the sentence</span>
           <ul className="steps">
             {steps.map(st => (
               <li key={st.n}><button className={focusStep === st.n ? "on" : ""} onClick={() => pickStep(st.n)}>
-                <span className="sn">{st.n}</span><span>Step {st.n}</span><span className="at">at #{st.at + 1}</span>
+                <span className="sn">{st.n}</span><span className="st-text">{st.text ?? `Step ${st.n}`}</span><span className="at">#{st.at + 1}</span>
               </button></li>
             ))}
           </ul>

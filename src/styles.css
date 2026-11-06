@@ -247,3 +247,13 @@ input[type=range]{accent-color:var(--tungsten);width:120px}
 .edit-hint{position:absolute;left:16px;top:40px;z-index:6;font-size:12.5px;color:var(--ink-2);background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:6px 10px}
 .sim{font-family:var(--f-mono);font-size:10.5px;color:var(--ink-3)}
 .empty{padding:40px;color:var(--ink-3);text-align:center}
+/* alternating sentence colours, as in the reading scripts (navy / orange, dark-theme values) */
+.k-a{color:#8fb2ff} .k-b{color:#ffa266}
+.note-card{width:100%;height:100%;background:#f7f5f0;color:#1e1e1e;padding:6% 7%;display:flex;flex-direction:column;gap:6px;overflow:hidden}
+.note-card p{margin:0;font-family:var(--f-hand);font-size:clamp(15px,1.7vw,24px);line-height:1.2}
+.nc-step{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.06em;color:#c2410c}
+.nc-sec{margin-top:auto;font-family:var(--f-mono);font-size:10px;color:#777;letter-spacing:.06em}
+.sec-head{font-family:var(--f-display);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);padding:18px 10px 4px 54px;border-top:1px solid var(--line);margin-top:10px}
+.sec-head:first-child{border-top:0;margin-top:0;padding-top:4px}
+.steps .st-text{font-size:12.5px;line-height:1.35;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pl-sec{font-family:var(--f-mono);font-size:12px;letter-spacing:.14em;color:var(--ink-3);margin:0 0 1.2em;text-transform:uppercase}

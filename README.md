@@ -40,23 +40,33 @@ Other commands:
 
 ## Script markup
 
-```markdown
-# 1.3 What is an API?
+The parser reads the course scripts as they are written today:
 
-[ON SCREEN: step 1]
-{intro} Welcome back. In this lesson we look at how an API lets two programs talk.
-{key} Think of an API as a **waiter** in a restaurant. [pause 1s]
-{ex} You read the menu, / you place an order, / and the kitchen does the work.
+```markdown
+**Reliability, Scalability, Maintainability: The Three Questions**
+(About 12 minutes. Format: Detailed, timed at 228 spoken words per minute plus pauses.)
+Bold = stress. / = brief pause. [pause] = 1 second. [long pause] = 2 to 3 seconds.
+
+=== PART 1. COLD OPEN ===
+
+[ON SCREEN: a trading floor at 9:31 in the morning.]
+
+Picture a Monday morning at a bank. / The market opened one minute ago. [pause]
 ```
 
 | Markup | Meaning |
 | --- | --- |
-| `[ON SCREEN: step 3]` | Show diagram step 3 at the next sentence. Hidden on the prompter |
-| `[ON SCREEN: any text]` | Shown as a small cue on the next sentence |
-| `[pause 2s]`, `[pause]` | Hold after the previous sentence (default 1 s), with a countdown bar |
-| `/` | Breath mark |
-| `**word**` | Stressed word: bold and larger |
-| `{intro}` `{key}` `{def}` `{ex}` `{tr}` | Optional sentence colour; it carries on until the next tag on the same line |
+| `**Title**` or `# Title` on the first line | Video title |
+| `(...)` lines, `Bold = ...` legend | Skipped. "timed at N words per minute" sets the target pace |
+| `=== PART 1. NAME ===` or `## Name` | Section |
+| `[ON SCREEN: any text]` | Next diagram step (numbered in order), shown at the next sentence. Hidden on the prompter |
+| `[ON SCREEN: step 3]` | Explicit step number |
+| `[pause]`, `[long pause]`, `[pause 2s]` | Hold after the previous sentence: 1 s, 2.5 s, or the given time, with a countdown bar |
+| `/` | Breath mark (0.3 s) |
+| `**words**` | Stressed words, can span several words and breath marks |
+| `{intro}` `{key}` `{def}` `{ex}` `{tr}` | Optional colour tags. Without tags, sentences alternate navy and orange like the reading scripts |
+
+Put your own course files in `samples/` to try them; that folder is not committed.
 
 ## Roadmap
 

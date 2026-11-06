@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Script } from "../lib/script";
-import { Diagram } from "./Diagram";
+import { ScreenCard } from "./ScreenCard";
+import { BREATH } from "../lib/script";
 import { Words } from "./Words";
 import { EditableLine } from "./EditableLine";
 
@@ -26,9 +27,14 @@ export function Record({ script, startAt, onEdit }: Props) {
   const sentenceOf = useCallback((w: number) => {
     let i = 0; while (i + 1 < S.length && offsets.first[i + 1] <= w) i++; return i;
   }, [S, offsets]);
-  const wordAt = (w: number) => {
-    const s = S[sentenceOf(w)]; const words = s.tokens.filter(t => t.type === "word");
-    return (words[w - offsets.first[s.index]] as { text: string } | undefined)?.text ?? "";
+  /** Is word w followed by a / breath mark? */
+  const breathAfter = (w: number) => {
+    if (w < 0) return false;
+    const s = S[sentenceOf(w)]; let n = offsets.first[s.index] - 1;
+    for (let i = 0; i < s.tokens.length; i++) {
+      if (s.tokens[i].type === "word" && ++n === w) return s.tokens[i + 1]?.type === "breath";
+    }
+    return false;
   };
 
   const [cur, setCur] = useState(() => ({ s: startAt, w: (offsets.first[startAt] ?? 0) - 1 }));
@@ -65,8 +71,8 @@ export function Record({ script, startAt, onEdit }: Props) {
       return () => clearTimeout(t);
     }
     phase.current += 0.18;
-    const pace = 150 + Math.sin(phase.current) * 20;
-    const delay = 60000 / pace + (/,$/.test(wordAt(cur.w)) ? 260 : 0);
+    const pace = script.wpm + Math.sin(phase.current) * script.wpm * 0.12;
+    const delay = 60000 / pace + (breathAfter(cur.w) ? BREATH * 1000 : 0);
     const t = setTimeout(() => setCur({ w: next, s: nextS }), cur.w < 0 ? 300 : delay);
     return () => clearTimeout(t);
   }, [live, cur, editing, pausesDone]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -78,10 +84,10 @@ export function Record({ script, startAt, onEdit }: Props) {
     const meter = setInterval(() => {
       const amp = pausing !== null ? 0.05 : 0.45 + Math.random() * 0.5;
       setLevels(Array.from({ length: 16 }, (_, i) => (i / 16 < amp ? 1 : 0)));
-      setWpm(pausing !== null ? 0 : Math.round(150 + Math.sin(phase.current) * 20));
+      setWpm(pausing !== null ? 0 : Math.round(script.wpm + Math.sin(phase.current) * script.wpm * 0.12));
     }, 140);
     return () => { clearInterval(clock); clearInterval(meter); };
-  }, [live, pausing]);
+  }, [live, pausing, script.wpm]);
 
   // Keep the current sentence on the eye line
   useLayoutEffect(() => {
@@ -122,7 +128,9 @@ export function Record({ script, startAt, onEdit }: Props) {
 
   const step = S.slice(0, cur.s + 1).reduce((a, s) => s.step ?? a, 0);
   const maxStep = Math.max(0, ...S.map(s => s.step ?? 0));
-  const pos = Math.max(2, Math.min(98, ((wpm - 90) / 120) * 100));
+  // Pace dial centred on the script's own target speed
+  const pos = Math.max(2, Math.min(98, 50 + ((wpm - script.wpm) / script.wpm) * 160));
+  const paceLabel = !wpm ? "idle" : wpm > script.wpm * 1.15 ? "too fast" : wpm < script.wpm * 0.8 ? "slow" : "good";
   const mmss = `${String(Math.floor(recT / 60)).padStart(2, "0")}:${String(recT % 60).padStart(2, "0")}`;
 
   return (
@@ -136,8 +144,9 @@ export function Record({ script, startAt, onEdit }: Props) {
           <div className="prompt" ref={promptRef} style={{ ["--fs" as string]: fs + "px" }}>
             {S.map(s => {
               const rel = s.index < cur.s ? "past" : s.index === cur.s ? "cur" : s.index === cur.s + 1 ? "next" : "later";
-              return (
-                <p key={s.index} className={`pl k-${s.kind} ${rel}${editing === s.index ? " editing" : ""}`} data-s={s.index}
+              return (<div key={s.index}>
+                {s.section && s.section !== S[s.index - 1]?.section && <div className="pl-sec">{s.section}</div>}
+                <p className={`pl k-${s.kind} ${rel}${editing === s.index ? " editing" : ""}`} data-s={s.index}
                    onClick={() => editing === null && startEdit(s.index)} title="Click to edit this sentence">
                   {editing === s.index
                     ? <EditableLine value={s.source} onSave={v => saveEdit(s.index, v)} onCancel={() => setEditing(null)} />
@@ -146,7 +155,7 @@ export function Record({ script, startAt, onEdit }: Props) {
                         {s.pause && <span className="cue"><span className="fill" style={pausing === s.index ? { width: "100%", transition: `width ${s.pause}s linear` } : pausesDone.has(s.index) ? { width: "100%" } : undefined} /><span>⏸ {s.pause}s</span></span>}
                         {s.step && <span className="oncue">◆ step {s.step}</span>}
                       </>}
-                </p>
+                </p></div>
               );
             })}
           </div>
@@ -157,7 +166,7 @@ export function Record({ script, startAt, onEdit }: Props) {
             <div className="meter"><span className="label">Mic</span>
               <div className="level">{levels.map((on, i) => { const f = i / 16; return <i key={i} className={on ? (f > 0.85 ? "x" : f > 0.65 ? "h" : "") : ""} style={{ height: on ? 6 + f * 16 : 3, opacity: on ? 1 : 0.25 }} />; })}</div>
             </div>
-            <div className="meter"><span className="label">Pace · {!wpm ? "idle" : wpm > 175 ? "too fast" : wpm < 120 ? "slow" : "good"}</span><div className="speed"><b style={{ left: (wpm ? pos : 2) + "%" }} /></div></div>
+            <div className="meter"><span className="label">Pace · {paceLabel} · target {script.wpm}</span><div className="speed"><b style={{ left: (wpm ? pos : 2) + "%" }} /></div></div>
             <div className="meter"><span className="label">Words / min</span><span className="mono big">{wpm || "—"}</span></div>
             <div className="meter"><span className="label">Take</span><span className="mono big">{take}</span></div>
             <span className="sim">voice simulated</span>
@@ -172,8 +181,8 @@ export function Record({ script, startAt, onEdit }: Props) {
 
       <div className="side">
         <div className="panel">
-          <div className="ph"><h2>Live diagram</h2><span className="meta">step {step} / {maxStep}</span></div>
-          <div className="mini"><div className="slide"><Diagram upTo={step} ghost /></div></div>
+          <div className="ph"><h2>On screen now</h2><span className="meta">step {step} / {maxStep}</span></div>
+          <div className="mini"><div className="slide"><ScreenCard script={script} step={step} ghost /></div></div>
         </div>
         <div className="panel">
           <div className="ph"><h2>Prompter</h2></div>
