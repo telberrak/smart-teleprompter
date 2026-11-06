@@ -1,12 +1,14 @@
 import { useState } from "react";
 import type { Script } from "../lib/script";
 import { wordCount, estimateSeconds } from "../lib/script";
-import { ScreenCard } from "./ScreenCard";
+import { ScreenCard, type SlideView } from "./ScreenCard";
 import { Words } from "./Words";
 import { EditableLine } from "./EditableLine";
 
 interface Props {
   script: Script;
+  view: SlideView;
+  onOpenSlides: () => void;
   fileName: string;
   saved: boolean;
   onOpen: () => void;
@@ -14,7 +16,7 @@ interface Props {
   onRecord: () => void;
 }
 
-export function Prepare({ script, fileName, saved, onOpen, onEdit, onRecord }: Props) {
+export function Prepare({ script, view, fileName, saved, onOpen, onOpenSlides, onEdit, onRecord }: Props) {
   const [editing, setEditing] = useState<number | null>(null);
   const [focusStep, setFocusStep] = useState<number | null>(null);
   const S = script.sentences;
@@ -37,10 +39,12 @@ export function Prepare({ script, fileName, saved, onOpen, onEdit, onRecord }: P
         <div className="files">
           <span className="label">Loaded</span>
           <div><i>✓</i>{fileName}</div>
+          <div>{view.slides ? <><i>✓</i>{view.slides.fileName} · {view.slides.frames.length} slides</> : <span style={{ color: "var(--ink-3)" }}>No slides loaded</span>}</div>
           <div style={{ color: saved ? "var(--good)" : "var(--ink-3)" }}>{saved ? "Edits save to this file" : "Sample / browser mode: edits stay in memory"}</div>
         </div>
         <div className="go" style={{ marginTop: 0, borderTop: 0 }}>
           <button className="btn" onClick={onOpen}>Open a script…</button>
+          <button className="btn ghost" onClick={onOpenSlides}>Open slides…</button>
         </div>
       </aside>
 
@@ -93,12 +97,12 @@ export function Prepare({ script, fileName, saved, onOpen, onEdit, onRecord }: P
       <aside className="panel">
         <div className="ph"><h2>On screen</h2><span className="meta">{steps.length} steps</span></div>
         <div className="slide-wrap">
-          <div className="slide"><ScreenCard script={script} step={focusStep ?? (script.tagged ? maxStep : 1)} ghost={focusStep !== null} /></div>
-          <span className="label">Diagram steps · click to find the sentence</span>
+          <div className="slide"><ScreenCard script={script} view={view} step={focusStep ?? (script.tagged ? maxStep : 1)} ghost={focusStep !== null} /></div>
+          <span className="label">ON SCREEN steps · click to find the sentence</span>
           <ul className="steps">
             {steps.map(st => (
               <li key={st.n}><button className={focusStep === st.n ? "on" : ""} onClick={() => pickStep(st.n)}>
-                <span className="sn">{st.n}</span><span className="st-text">{st.text ?? `Step ${st.n}`}</span><span className="at">#{st.at + 1}</span>
+                <span className="sn">{st.n}</span><span className="st-text">{view.slides && (view.frameForStep.get(st.n) ?? -1) >= 0 ? <b>{view.slides.frames[view.frameForStep.get(st.n)!].name}</b> : null}{view.slides ? " · " : ""}{st.text ?? `Step ${st.n}`}</span><span className="at">#{st.at + 1}</span>
               </button></li>
             ))}
           </ul>

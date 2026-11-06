@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Script } from "../lib/script";
-import { ScreenCard } from "./ScreenCard";
+import { ScreenCard, type SlideView } from "./ScreenCard";
 import { BREATH } from "../lib/script";
 import { Words } from "./Words";
 import { EditableLine } from "./EditableLine";
 
 interface Props {
   script: Script;
+  view: SlideView;
   startAt: number;
   onEdit: (index: number, source: string) => void;
 }
@@ -17,7 +18,7 @@ const EYE_LINE = 140; // px from the top of the prompter: just under the camera
  * Full-screen prompter. Milestone 1 simulates the voice with a steady reading pace;
  * milestone 2 replaces the timer with whisper.cpp + the live aligner.
  */
-export function Record({ script, startAt, onEdit }: Props) {
+export function Record({ script, view, startAt, onEdit }: Props) {
   const S = script.sentences;
   const offsets = useMemo(() => {
     const o: number[] = []; let n = 0;
@@ -186,7 +187,7 @@ export function Record({ script, startAt, onEdit }: Props) {
       <div className="side">
         <div className="panel">
           <div className="ph"><h2>On screen now</h2><span className="meta">step {step} / {maxStep}</span></div>
-          <div className="mini"><div className="slide"><ScreenCard script={script} step={step} ghost /></div></div>
+          <div className="mini"><div className="slide"><ScreenCard script={script} view={view} step={step} ghost /></div></div>
         </div>
         <div className="panel">
           <div className="ph"><h2>Prompter</h2></div>

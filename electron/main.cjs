@@ -32,6 +32,30 @@ ipcMain.handle("script:open", async () => {
   });
   if (res.canceled || !res.filePaths[0]) return null;
   const file = res.filePaths[0];
+  return { path: file, name: path.basename(file), content: await fs.readFile(file, "utf8"), slides: await findSlides(file) };
+});
+
+// The slides that belong to a script: 1.1-whiteboard-script.md -> 1.1-slides.excalidraw,
+// else the only .excalidraw file in the same folder.
+async function findSlides(scriptFile) {
+  const dir = path.dirname(scriptFile);
+  const base = path.basename(scriptFile).replace(/\.[^.]+$/, "");
+  const prefix = (base.match(/^(.*?)-(whiteboard|script)/) ?? [null, base])[1];
+  const all = (await fs.readdir(dir)).filter(f => f.toLowerCase().endsWith(".excalidraw"));
+  const pickName = all.find(f => f.startsWith(prefix + "-")) ?? (all.length === 1 ? all[0] : null);
+  if (!pickName) return null;
+  const file = path.join(dir, pickName);
+  return { path: file, name: pickName, content: await fs.readFile(file, "utf8") };
+}
+
+ipcMain.handle("slides:open", async () => {
+  const res = await dialog.showOpenDialog({
+    title: "Open Excalidraw slides",
+    filters: [{ name: "Excalidraw", extensions: ["excalidraw", "json"] }],
+    properties: ["openFile"],
+  });
+  if (res.canceled || !res.filePaths[0]) return null;
+  const file = res.filePaths[0];
   return { path: file, name: path.basename(file), content: await fs.readFile(file, "utf8") };
 });
 

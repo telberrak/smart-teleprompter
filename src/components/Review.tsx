@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Script } from "../lib/script";
-import { Diagram } from "./Diagram";
+import { ScreenCard, type SlideView } from "./ScreenCard";
 
 interface Take { d: string; best?: boolean; bad?: boolean }
 
@@ -18,7 +18,7 @@ function Wave({ seed, silent }: { seed: number; silent: [number, number][] }) {
   );
 }
 
-export function Review({ script, onRedo }: { script: Script; onRedo: (i: number) => void }) {
+export function Review({ script, view, onRedo }: { script: Script; view: SlideView; onRedo: (i: number) => void }) {
   const S = script.sentences;
   const initial = useMemo(() => S.map((s, i): Take[] => {
     const d = (n: number) => `${(s.tokens.length * 0.38 + n).toFixed(1)}s`;
@@ -54,7 +54,7 @@ export function Review({ script, onRedo }: { script: Script; onRedo: (i: number)
       <div className="panel">
         <div className="ph"><h2>Final cut</h2><span className="meta">preview</span></div>
         <div className="preview">
-          <div className="frame"><Diagram upTo={3} /><span className="bubble" aria-hidden="true" /><span className="cap">{S[Math.min(4, S.length - 1)]?.spoken}</span></div>
+          <div className="frame"><ScreenCard script={script} view={view} step={S[Math.min(4, S.length - 1)]?.step ?? S.slice(0, 5).reduce((a, s) => s.step ?? a, 0)} /><span className="bubble" aria-hidden="true" /><span className="cap">{S[Math.min(4, S.length - 1)]?.spoken}</span></div>
           <span className="label">Exports (milestones 4 to 6)</span>
           <div className="outs">
             <div className="out"><span className="ext">MP4</span><span className="f">final video, silences cut</span><span className="sz">M4</span></div>

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import sample from "./sample/1.3-whiteboard-script.md?raw";
 import { parseScript, replaceSentence } from "./lib/script";
-import { inElectron, openScript, saveScript } from "./lib/bridge";
+import { inElectron, openScript, openSlides, saveScript } from "./lib/bridge";
+import { parseSlides, matchNotesToFrames, type Slides } from "./lib/excalidraw";
+import type { SlideView } from "./components/ScreenCard";
 import { Prepare } from "./components/Prepare";
 import { Record } from "./components/Record";
 import { Review } from "./components/Review";
@@ -15,7 +17,25 @@ export function App() {
   const [screen, setScreen] = useState<Screen>(() => (SCREENS.find(s => "#" + s === location.hash) ?? "prepare"));
   const [startAt, setStartAt] = useState(0);
   const [note, setNote] = useState("");
+  const [slides, setSlides] = useState<Slides | null>(null);
   const script = useMemo(() => parseScript(md), [md]);
+  // Which frame each ON SCREEN step shows
+  const view = useMemo<SlideView>(() => {
+    const steps = script.sentences.filter(s => s.step);
+    const map = new Map<number, number>();
+    if (slides) {
+      const idx = matchNotesToFrames(steps.map(s => s.screen ?? ""), slides.frames);
+      steps.forEach((s, i) => map.set(s.step!, idx[i]));
+    }
+    return { slides, frameForStep: map };
+  }, [script, slides]);
+
+  const loadSlides = (f: { name: string; content: string } | null | undefined) => {
+    if (!f) { setSlides(null); return; }
+    try { setSlides(parseSlides(f.content, f.name)); setNote(`Slides loaded: ${f.name}`); }
+    catch (e) { setSlides(null); setNote(`Could not read ${f.name}: ${(e as Error).message}`); }
+  };
+  const pickSlides = async () => loadSlides(await openSlides());
 
   useEffect(() => { history.replaceState(null, "", "#" + screen); }, [screen]);
   useEffect(() => { if (!note) return; const t = setTimeout(() => setNote(""), 2800); return () => clearTimeout(t); }, [note]);
@@ -24,6 +44,7 @@ export function App() {
     const f = await openScript();
     if (!f) return;
     setMd(f.content); setFile({ path: f.path, name: f.name }); setStartAt(0); setScreen("prepare");
+    loadSlides("slides" in f ? f.slides : null);
   };
 
   const edit = useCallback((index: number, source: string) => {
@@ -53,9 +74,9 @@ export function App() {
         </nav>
         <span className="offline">Offline</span>
       </header>
-      {screen === "prepare" && <Prepare script={script} fileName={file.name} saved={!!file.path} onOpen={open} onEdit={edit} onRecord={() => { setStartAt(0); setScreen("record"); }} />}
-      {screen === "record" && <Record script={script} startAt={startAt} onEdit={edit} />}
-      {screen === "review" && <Review script={script} onRedo={i => { setStartAt(Math.max(0, i - 2)); setScreen("record"); }} />}
+      {screen === "prepare" && <Prepare script={script} view={view} fileName={file.name} saved={!!file.path} onOpen={open} onOpenSlides={pickSlides} onEdit={edit} onRecord={() => { setStartAt(0); setScreen("record"); }} />}
+      {screen === "record" && <Record script={script} view={view} startAt={startAt} onEdit={edit} />}
+      {screen === "review" && <Review script={script} view={view} onRedo={i => { setStartAt(Math.max(0, i - 2)); setScreen("record"); }} />}
       <div className={"gtoast" + (note ? " show" : "")} role="status">{note}</div>
     </div>
   );
