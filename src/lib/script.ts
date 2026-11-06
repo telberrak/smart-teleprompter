@@ -12,13 +12,17 @@
  *   /                         breath mark (0.3 s)
  *   **words, even / several** stressed words (can span several words)
  *   {intro|key|def|ex|tr}     optional colour tag; without tags sentences alternate navy / orange
+ *
+ * Sentences end as in colour_sentences.py: at a word ending in . ? or ! (plus an optional closing
+ * quote, or a closing **). Pause marks stay with the sentence before them; a sentence may run across lines.
  */
 
 export type Kind = "intro" | "key" | "def" | "ex" | "tr" | "a" | "b" | "plain";
 
 export type Token =
   | { type: "word"; text: string; stress: boolean }
-  | { type: "breath" };
+  | { type: "breath" }
+  | { type: "pause"; secs: number; long: boolean };
 
 export interface Sentence {
   index: number;
@@ -34,6 +38,7 @@ export interface Sentence {
   /** The ON SCREEN note for that step, if it was free text. */
   screen?: string;
   notes: string[];
+  /** Total of the [pause] marks inside or after this sentence, in seconds. */
   pause?: number;
 }
 
@@ -49,130 +54,142 @@ export interface Script {
 
 const NOTE_RE = /^\[\s*ON\s+SCREEN\s*:?\s*([\s\S]*)\]$/i;
 const PAUSE_RE = /^\[\s*(long\s+)?pause(?:\s+(\d+(?:\.\d+)?)\s*s?)?\s*\]$/i;
-const KIND_RE = /^\{(intro|key|def|ex|tr)\}\s*/i;
+const KIND_RE = /^\{(intro|key|def|ex|tr)\}$/i;
+/**
+ * Same rule as colour_sentences.py: a word ending in . ? or ! (plus an optional closing quote) ends the sentence.
+ * One difference: a closing ** after the punctuation also ends it, so a bold line like **"How did ...?"** is its own sentence.
+ */
+const END_RE = /[.?!]["”]?(\*\*)?$/;
 export const LONG_PAUSE = 2.5;
 export const BREATH = 0.3;
 
-/** Split text into sentences after . ! ? (plus closing quotes, brackets or **, and a trailing / breath), before a new sentence start. */
-export function splitSentences(text: string): string[] {
-  return text
-    .split(/(?<=[.!?]["'”)\]*]{0,4}(?:\s+\/)?)\s+(?=[\[{*"'“A-Z0-9À-Ý])/u)
-    .map(s => s.trim())
-    .filter(Boolean);
+/** Split raw text into tokens, keeping [bracket markers] whole. */
+function rawTokens(text: string): string[] {
+  return text.match(/\[[^\]]*\]|\S+/g) ?? [];
 }
 
-/** Tokenize one sentence. `bold` carries a **stress** span that started in an earlier sentence. */
+/** Split text into sentences with the colour_sentences.py rule. Used for tests and tools. */
+export function splitSentences(text: string): string[] {
+  return parseScript("# x\n" + text).sentences.map(s => s.source);
+}
+
+/** Tokenize one sentence's source. `bold` carries a **stress** span that started earlier. */
 export function tokenize(src: string, bold = false): { tokens: Token[]; bold: boolean } {
   const tokens: Token[] = [];
-  for (const raw of src.split(/\s+/).filter(Boolean)) {
-    if (raw === "/" || raw === "//") { tokens.push({ type: "breath" }); continue; }
-    const marks = (raw.match(/\*\*/g) || []).length;
-    const opens = raw.startsWith("**") || (raw.indexOf("**") > 0 && !bold && marks % 2 === 0);
-    const stress = bold || opens || marks > 0;
-    const text = raw.replace(/\*\*/g, "");
-    if (marks % 2 === 1) bold = !bold;
-    if (text) tokens.push({ type: "word", text, stress });
+  for (const raw of rawTokens(src)) {
+    const t = toToken(raw, bold);
+    bold = t.bold;
+    if (t.token) tokens.push(t.token);
   }
   return { tokens, bold };
+}
+
+function toToken(raw: string, bold: boolean): { token?: Token; bold: boolean } {
+  if (raw === "/" || raw === "//") return { token: { type: "breath" }, bold };
+  const p = raw.match(PAUSE_RE);
+  if (p) {
+    const secs = p[2] ? Number(p[2]) : p[1] ? LONG_PAUSE : 1;
+    return { token: { type: "pause", secs, long: !!p[1] }, bold };
+  }
+  const marks = (raw.match(/\*\*/g) || []).length;
+  const stress = bold || marks > 0;
+  if (marks % 2 === 1) bold = !bold;
+  const text = raw.replace(/\*\*/g, "");
+  return { token: text ? { type: "word", text, stress } : undefined, bold };
 }
 
 export function parseScript(md: string): Script {
   const lines = md.replace(/\r\n?/g, "\n").split("\n");
   let title = "";
   let wpm = 150;
-  let tagged = false;
+  const tagged = /\{(intro|key|def|ex|tr)\}/i.test(md);
   const sections: string[] = [];
   const sentences: Sentence[] = [];
   let section: string | undefined;
   let pendingStep: number | undefined;
   let pendingScreen: string | undefined;
-  let pendingNotes: string[] = [];
   let autoStep = 0;
   let bold = false;
+  let kind: Kind = "plain";
 
-  // Pass 1: header lines and sections. Remaining text goes to paragraphs.
-  const blocks: { section?: string; text: string }[] = [];
-  let buf: string[] = [];
-  const flush = () => { if (buf.join("").trim()) blocks.push({ section, text: buf.join(" ") }); buf = []; };
+  // The sentence being built. Like colour_sentences.py, a sentence can run across lines,
+  // and pause marks after its last word stay with it until the next word starts a new one.
+  let cur: { raw: string[]; tokens: Token[]; section?: string; step?: number; screen?: string; kind: Kind } | null = null;
+  let ended = false;
+
+  const finish = () => {
+    if (!cur) return;
+    const words = cur.tokens.filter((t): t is Extract<Token, { type: "word" }> => t.type === "word");
+    if (words.length) {
+      const pause = cur.tokens.reduce((a, t) => a + (t.type === "pause" ? t.secs : 0), 0);
+      sentences.push({
+        index: sentences.length,
+        kind: tagged ? cur.kind : sentences.length % 2 === 0 ? "a" : "b",
+        source: cur.raw.join(" "),
+        spoken: words.map(w => w.text).join(" "),
+        tokens: cur.tokens,
+        section: cur.section,
+        step: cur.step,
+        screen: cur.screen,
+        notes: [],
+        pause: pause || undefined,
+      });
+    }
+    cur = null; ended = false;
+  };
+
   let seenTitle = false;
   for (const line of lines) {
     const t = line.trim();
-    if (!t) { flush(); continue; }
+    if (!t) continue;
     if (!seenTitle) {
+      seenTitle = true;
       const h = t.match(/^#\s+(.+)$/) || t.match(/^\*\*(.+)\*\*$/);
-      if (h) { title = h[1].trim(); seenTitle = true; continue; }
+      if (h) { title = h[1].trim(); continue; }
     }
-    seenTitle = true;
     if (/^\(.*\)$/.test(t)) {
       const w = t.match(/(\d+)\s+(?:spoken\s+)?words\s+per\s+minute/i);
       if (w) wpm = Number(w[1]);
       continue;
     }
     if (/^bold\s*=/i.test(t)) continue;
-    const sec = t.match(/^={2,}\s*(.+?)\s*={2,}$/) || t.match(/^#{2,6}\s+(.+)$/);
-    if (sec) { flush(); section = sec[1].replace(/^PART\s+\d+\.\s*/i, ""); sections.push(section); continue; }
-    if (/^#\s/.test(t)) continue;
-    buf.push(t);
-  }
-  flush();
-  if (/\{(intro|key|def|ex|tr)\}/i.test(md)) tagged = true;
-
-  for (const block of blocks) {
-    const pieces = block.text.split(/(\[[^\]]*\])/g);
-    let text = "";
-    const flushText = () => {
-      let inherited: Kind = "plain";
-      for (const s of splitSentences(text)) inherited = addSentence(s, inherited, block.section);
-      text = "";
-    };
-    for (const piece of pieces) {
-      if (!piece) continue;
-      const note = piece.match(NOTE_RE);
+    const sec = t.match(/^={2,}\s*(.+?)\s*={2,}$/) || t.match(/^#{1,6}\s+(.+)$/) || t.match(/^-{3}\s*(.+?)\s*-{3}$/);
+    if (sec) {
+      finish();
+      section = sec[1].replace(/^PART\s+\d+\.\s*/i, "");
+      sections.push(section);
+      continue;
+    }
+    for (const raw of rawTokens(t)) {
+      const note = raw.match(NOTE_RE);
       if (note) {
-        flushText();
         const body = note[1].trim();
         const explicit = body.match(/^step\s*(\d+)\s*$/i);
-        if (explicit) { pendingStep = Number(explicit[1]); autoStep = pendingStep; }
-        else if (body) { pendingStep = ++autoStep; pendingScreen = body; }
+        if (explicit) { pendingStep = Number(explicit[1]); autoStep = pendingStep; pendingScreen = undefined; }
+        else if (body && body !== "…") { pendingStep = ++autoStep; pendingScreen = body; }
         continue;
       }
-      const pause = piece.match(PAUSE_RE);
-      if (pause) {
-        flushText();
-        const last = sentences[sentences.length - 1];
-        const secs = pause[2] ? Number(pause[2]) : pause[1] ? LONG_PAUSE : 1;
-        if (last) last.pause = (last.pause ?? 0) + secs;
-        continue;
+      const k = raw.match(KIND_RE);
+      if (k) { kind = k[1].toLowerCase() as Kind; continue; }
+      const { token, bold: b } = toToken(raw, bold);
+      bold = b;
+      if (!token) continue;
+      if (token.type === "word") {
+        if (ended || !cur) {
+          finish();
+          cur = { raw: [], tokens: [], section, kind, step: pendingStep, screen: pendingScreen };
+          pendingStep = undefined; pendingScreen = undefined;
+        }
+        cur.raw.push(raw);
+        cur.tokens.push(token);
+        if (END_RE.test(raw)) ended = true;
+      } else if (cur) {
+        cur.raw.push(raw);
+        cur.tokens.push(token);
       }
-      text += piece;
     }
-    flushText();
   }
-
-  function addSentence(raw: string, inherited: Kind, sec?: string): Kind {
-    let src = raw.trim();
-    if (!src || src === "/") return inherited;
-    let kind: Kind = inherited;
-    const k = src.match(KIND_RE);
-    if (k) { kind = k[1].toLowerCase() as Kind; src = src.slice(k[0].length); }
-    const r = tokenize(src, bold);
-    const words = r.tokens.filter((t): t is Extract<Token, { type: "word" }> => t.type === "word");
-    if (!words.length) return kind;
-    bold = r.bold;
-    sentences.push({
-      index: sentences.length,
-      kind: tagged ? kind : sentences.length % 2 === 0 ? "a" : "b",
-      source: src,
-      spoken: words.map(w => w.text).join(" "),
-      tokens: r.tokens,
-      section: sec,
-      step: pendingStep,
-      screen: pendingScreen,
-      notes: pendingNotes,
-    });
-    pendingStep = undefined; pendingScreen = undefined; pendingNotes = [];
-    return kind;
-  }
+  finish();
 
   return { title: title || "Untitled script", sentences, sections, wpm, tagged };
 }
@@ -195,9 +212,9 @@ export function wordCount(s: Script): number {
 /** Estimated reading time in seconds at the script's pace, including pauses and breaths. */
 export function estimateSeconds(s: Script): number {
   let t = (wordCount(s) / s.wpm) * 60;
-  for (const x of s.sentences) {
-    t += x.pause ?? 0;
-    t += x.tokens.filter(k => k.type === "breath").length * BREATH;
+  for (const x of s.sentences) for (const k of x.tokens) {
+    if (k.type === "pause") t += k.secs;
+    if (k.type === "breath") t += BREATH;
   }
   return Math.round(t);
 }

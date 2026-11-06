@@ -81,7 +81,6 @@ export function Prepare({ script, fileName, saved, onOpen, onEdit, onRecord }: P
                   <div className="side">
                     {s.step && <span className="pill step" title={s.screen} onClick={() => pickStep(s.step!)}>ON SCREEN · {s.step}</span>}
                     {s.notes.map((x, i) => <span key={i} className="pill">{x}</span>)}
-                    {s.pause && <span className="pill pause">pause {s.pause}s</span>}
                   </div>
                 </div>
                 {n > 25 && <div className="warn">Sentence {s.index + 1} is long ({n} words). It may be hard to read aloud.</div>}

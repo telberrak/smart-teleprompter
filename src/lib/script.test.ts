@@ -69,6 +69,17 @@ describe("real script format", () => {
     expect(splitSentences("**Reliability.** / Faults will happen.")).toEqual(["**Reliability.** /", "Faults will happen."]);
   });
 
+  it("follows colour_sentences.py: sentences run across lines, pauses stay inside", () => {
+    const p = parseScript("**T**\n\nOne of the servers /\nhas a disk. [pause] Next one [long pause] goes on. / Last.");
+    expect(p.sentences.map(x => x.source)).toEqual([
+      "One of the servers / has a disk. [pause]",
+      "Next one [long pause] goes on. /",
+      "Last.",
+    ]);
+    expect(p.sentences[1].pause).toBe(2.5);
+    expect(p.sentences[1].tokens.map(t => t.type)).toEqual(["word", "word", "pause", "word", "word", "breath"]);
+  });
+
   it("alternates colours when there are no tags", () => {
     expect(s.tagged).toBe(false);
     expect(s.sentences.slice(0, 4).map(x => x.kind)).toEqual(["a", "b", "a", "b"]);

@@ -27,14 +27,18 @@ export function Record({ script, startAt, onEdit }: Props) {
   const sentenceOf = useCallback((w: number) => {
     let i = 0; while (i + 1 < S.length && offsets.first[i + 1] <= w) i++; return i;
   }, [S, offsets]);
-  /** Is word w followed by a / breath mark? */
-  const breathAfter = (w: number) => {
-    if (w < 0) return false;
-    const s = S[sentenceOf(w)]; let n = offsets.first[s.index] - 1;
-    for (let i = 0; i < s.tokens.length; i++) {
-      if (s.tokens[i].type === "word" && ++n === w) return s.tokens[i + 1]?.type === "breath";
+  /** What follows word w before the next word: a / breath, and seconds of [pause] marks. */
+  const after = (w: number) => {
+    const out = { breath: false, pause: 0 };
+    if (w < 0) return out;
+    const s = S[sentenceOf(w)]; let n = offsets.first[s.index] - 1; let found = false;
+    for (const t of s.tokens) {
+      if (t.type === "word") { if (found) break; if (++n === w) found = true; continue; }
+      if (!found) continue;
+      if (t.type === "breath") out.breath = true;
+      if (t.type === "pause") out.pause += t.secs;
     }
-    return false;
+    return out;
   };
 
   const [cur, setCur] = useState(() => ({ s: startAt, w: (offsets.first[startAt] ?? 0) - 1 }));
@@ -64,15 +68,15 @@ export function Record({ script, startAt, onEdit }: Props) {
     const next = cur.w + 1;
     if (next >= offsets.total) { setLive(false); toast(`Take ${take} complete · ${S.length} of ${S.length} sentences`); return; }
     const nextS = sentenceOf(next);
-    const p = S[cur.s]?.pause;
-    if (cur.w >= 0 && nextS !== cur.s && p && !pausesDone.has(cur.s)) {
-      setPausing(cur.s);
-      const t = setTimeout(() => { setPausing(null); setPausesDone(d => new Set(d).add(cur.s)); }, p * 1000);
+    const a = after(cur.w);
+    if (a.pause && !pausesDone.has(cur.w)) {
+      setPausing(cur.w);
+      const t = setTimeout(() => { setPausing(null); setPausesDone(d => new Set(d).add(cur.w)); }, a.pause * 1000);
       return () => clearTimeout(t);
     }
     phase.current += 0.18;
     const pace = script.wpm + Math.sin(phase.current) * script.wpm * 0.12;
-    const delay = 60000 / pace + (breathAfter(cur.w) ? BREATH * 1000 : 0);
+    const delay = 60000 / pace + (a.breath ? BREATH * 1000 : 0);
     const t = setTimeout(() => setCur({ w: next, s: nextS }), cur.w < 0 ? 300 : delay);
     return () => clearTimeout(t);
   }, [live, cur, editing, pausesDone]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -106,7 +110,7 @@ export function Record({ script, startAt, onEdit }: Props) {
     const atStart = cur.w <= offsets.first[cur.s];
     const s = Math.max(0, cur.s - (atStart ? 1 : 0));
     setCur({ s, w: offsets.first[s] - 1 });
-    setPausesDone(d => { const n = new Set(d); n.delete(s); return n; });
+    setPausesDone(d => new Set([...d].filter(w => w < offsets.first[s])));
     toast(`Back to sentence ${s + 1}`);
   }, [cur, offsets, toast]);
   const restart = () => {
@@ -151,8 +155,8 @@ export function Record({ script, startAt, onEdit }: Props) {
                   {editing === s.index
                     ? <EditableLine value={s.source} onSave={v => saveEdit(s.index, v)} onCancel={() => setEditing(null)} />
                     : <>
-                        <Words s={s} wordClass="w" offset={offsets.first[s.index]} said={s.index === cur.s ? cur.w : -1} now={s.index === cur.s ? cur.w : -1} />
-                        {s.pause && <span className="cue"><span className="fill" style={pausing === s.index ? { width: "100%", transition: `width ${s.pause}s linear` } : pausesDone.has(s.index) ? { width: "100%" } : undefined} /><span>⏸ {s.pause}s</span></span>}
+                        <Words s={s} wordClass="w" offset={offsets.first[s.index]} said={s.index === cur.s ? cur.w : -1} now={s.index === cur.s ? cur.w : -1}
+                          pauseFill={w => pausing === w ? { width: "100%", transition: `width ${after(w).pause}s linear` } : pausesDone.has(w) ? { width: "100%" } : undefined} />
                         {s.step && <span className="oncue">◆ step {s.step}</span>}
                       </>}
                 </p></div>
