@@ -60,7 +60,7 @@ export function App() {
   }, [md, script, file]);
 
   return (
-    <div className="app">
+    <div className={"app" + (screen === "record" ? " fit" : "")}>
       <header className="bar">
         <div className="brand"><span className="lens" aria-hidden="true" />Smart Teleprompter</div>
         <div className="crumb"><b>{script.title}</b></div>
