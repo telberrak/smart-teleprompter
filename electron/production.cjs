@@ -123,6 +123,16 @@ function productionGraph(p, ix) {
   return parts.join(";\n");
 }
 
+/** Write a file, waiting a moment and trying again while Windows has it locked. */
+function writeRetry(file, data) {
+  for (let i = 0; ; i++) {
+    try { fs.writeFileSync(file, data); return; } catch (e) {
+      if (i >= 8 || !["EPERM", "EBUSY", "EACCES"].includes(e.code)) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 * (i + 1));
+    }
+  }
+}
+
 /**
  * opts: { production, slides: {name: bytes} (one per slide clip, in order: slide-<i>.png),
  *         titles: [bytes] (one per title clip, in start order), mask, ring, srt, description,
@@ -134,9 +144,16 @@ async function exportProduction(scriptPath, segs, onProgress, opts) {
   const cut = await media.ensureCut(scriptPath, segs, x => onProgress(x * 0.25), opts.srt);
   const work = `${base}-production`;
   fs.mkdirSync(path.join(dir, work), { recursive: true });
-  // Drawing pictures from an earlier export.
-  for (const f of fs.readdirSync(path.join(dir, work))) if (/^slide-\d+-\d+\.jpg$/.test(f)) fs.rmSync(path.join(dir, work, f), { force: true });
-  const put = (name, bytes) => { fs.writeFileSync(path.join(dir, work, name), Buffer.from(bytes)); return `${work}/${name}`; };
+  // Drawing pictures go in a new folder each export: on Windows a file that was just deleted can stay
+  // locked (antivirus, indexer) and writing the same name again fails with EPERM.
+  // Earlier exports' folders (and loose pictures from older versions) are removed when Windows lets us.
+  for (const f of fs.readdirSync(path.join(dir, work))) {
+    if (/^draw-\d+$/.test(f) || /^slide-\d+-\d+\.jpg$/.test(f)) {
+      try { fs.rmSync(path.join(dir, work, f), { recursive: true, force: true }); } catch { /* still locked: next time */ }
+    }
+  }
+  const drawDir = `draw-${Date.now()}`;
+  const put = (name, bytes) => { writeRetry(path.join(dir, work, name), Buffer.from(bytes)); return `${work}/${name}`; };
   const out = { srt: null, txt: null, png: null, file: null };
 
   // Side files first: they are quick.
@@ -157,13 +174,14 @@ async function exportProduction(scriptPath, segs, onProgress, opts) {
       const lines = ["ffconcat version 1.0"];
       pic.forEach((f, k) => {
         const name = `slide-${i + 1}-${String(k + 1).padStart(4, "0")}.jpg`;
-        put(name, f.img);
+        if (k === 0) fs.mkdirSync(path.join(dir, work, drawDir), { recursive: true });
+        put(`${drawDir}/${name}`, f.img);
         lines.push(`file '${name}'`, `duration ${f.dur.toFixed(4)}`);
       });
       // The last picture is listed again so its duration counts.
       lines.push(`file 'slide-${i + 1}-${String(pic.length).padStart(4, "0")}.jpg'`);
-      fs.writeFileSync(path.join(dir, work, `slide-${i + 1}.txt`), lines.join("\n") + "\n");
-      args.push("-f", "concat", "-safe", "0", "-i", `${work}/slide-${i + 1}.txt`);
+      writeRetry(path.join(dir, work, drawDir, `slide-${i + 1}.txt`), lines.join("\n") + "\n");
+      args.push("-f", "concat", "-safe", "0", "-i", `${work}/${drawDir}/slide-${i + 1}.txt`);
     } else {
       args.push("-loop", "1", "-framerate", "30", "-t", f3(s.end - s.start + 0.2), "-i", put(`slide-${i + 1}.png`, pic));
     }
@@ -190,6 +208,8 @@ async function exportProduction(scriptPath, segs, onProgress, opts) {
       if (m) onProgress(0.25 + 0.7 * Math.min(1, (+m[1] * 3600 + +m[2] * 60 + +m[3]) / total));
     }, dir);
     out.file = path.join(dir, name);
+    // The drawing pictures are only needed while FFmpeg runs.
+    try { fs.rmSync(path.join(dir, work, drawDir), { recursive: true, force: true }); } catch { /* removed next export */ }
   }
 
   // Thumbnail: the drawn background, plus a big round crop of your face from the chosen moment.
