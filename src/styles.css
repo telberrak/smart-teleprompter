@@ -268,7 +268,7 @@ input[type=range]{accent-color:var(--tungsten);width:120px}
 /* Whiteboard mode: slide centred at the top of the stage, text scrolls underneath */
 #record.wb{grid-template-columns:minmax(0,1fr) minmax(260px,24%)}
 .stage.wb .wb-slide{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:6px;padding:34px 18px 8px;position:relative;z-index:2}
-.stage.wb .wb-slide .slide{width:min(100%,calc((100vh - 330px)*16/9*.72));box-shadow:0 10px 40px rgba(0,0,0,.45)}
+.stage.wb .wb-slide .slide{width:min(100%,calc((100vh - 330px)*16/9*.576));box-shadow:0 10px 40px rgba(0,0,0,.45)}
 .stage.wb .wb-step{font-family:var(--f-mono);font-size:11px;color:var(--ink-3)}
 .stage.wb .prompt-viewport{min-height:170px;-webkit-mask-image:linear-gradient(180deg,transparent 0,#000 40px,#000 70%,transparent 100%);mask-image:linear-gradient(180deg,transparent 0,#000 40px,#000 70%,transparent 100%)}
 .stage.wb .prompt{text-align:center}
