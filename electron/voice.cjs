@@ -117,8 +117,11 @@ async function load() {
       const next = await new mod.WhisperContext({ filePath: p, useGpu: c.gpu });
       // One timed pass: whisper always encodes 30 s of audio, so this is the cost of every pass.
       set("loading", 0.5, `Measuring speed on the ${c.label}…`);
+      // The first pass also warms up the engine (GPU shaders), so time the second one.
+      const quiet = () => next.transcribeData(new Int16Array(16000 * 2).buffer, { language: "en", temperature: 0, temperatureInc: 0, maxThreads: threads() }).promise;
+      await quiet();
       const t0 = Date.now();
-      await next.transcribeData(new Int16Array(16000 * 2).buffer, { language: "en", temperature: 0, temperatureInc: 0, maxThreads: threads() }).promise;
+      await quiet();
       passMs = Date.now() - t0;
       loading = false;
       log("speed", { device: c.label, passMs });
