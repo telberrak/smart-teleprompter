@@ -1,10 +1,9 @@
 // FFmpeg work, main process side: make takes seekable, find silences, export the final cut.
 // FFmpeg itself comes from npm (@ffmpeg-installer/ffmpeg): nothing to install by hand.
-const { app, ipcMain, protocol, net, BrowserWindow } = require("electron");
+const { app, ipcMain, protocol, BrowserWindow } = require("electron");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
-const { pathToFileURL } = require("node:url");
 const { takesDir } = require("./takes.cjs");
 
 const ffmpegPath = () => require("@ffmpeg-installer/ffmpeg").path.replace("app.asar", "app.asar.unpacked");
@@ -283,7 +282,29 @@ function registerProtocol() {
   protocol.handle("take", req => {
     const p = decodeURIComponent(new URL(req.url).pathname.slice(1));
     if (!/\.(webm|mp4|mp3|wav|m4a|aac|ogg|flac|png)$/i.test(p) || !fs.existsSync(p)) return new Response("not found", { status: 404 });
-    return net.fetch(pathToFileURL(p).toString(), { headers: req.headers });
+    return serveFile(p, req.headers.get("range"));
+  });
+}
+
+const TYPES = { webm: "video/webm", mp4: "video/mp4", mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", aac: "audio/aac", ogg: "audio/ogg", flac: "audio/flac", png: "image/png" };
+/**
+ * A file with byte-range support. Fetching a file:// URL answers every request with the whole file,
+ * which makes a video unseekable: setting currentTime jumps back to the start.
+ */
+function serveFile(file, range) {
+  const size = fs.statSync(file).size;
+  const type = TYPES[path.extname(file).slice(1).toLowerCase()] ?? "application/octet-stream";
+  const body = (start, end) => require("node:stream").Readable.toWeb(fs.createReadStream(file, { start, end }));
+  const m = range && /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+  if (!m || (!m[1] && !m[2])) {
+    return new Response(body(0, Math.max(0, size - 1)), { status: 200, headers: { "Content-Type": type, "Content-Length": String(size), "Accept-Ranges": "bytes" } });
+  }
+  let start = m[1] ? +m[1] : Math.max(0, size - +m[2]);
+  let end = m[1] && m[2] ? Math.min(+m[2], size - 1) : size - 1;
+  if (start >= size || start > end) return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
+  return new Response(body(start, end), {
+    status: 206,
+    headers: { "Content-Type": type, "Content-Length": String(end - start + 1), "Content-Range": `bytes ${start}-${end}/${size}`, "Accept-Ranges": "bytes" },
   });
 }
 
@@ -299,4 +320,4 @@ function register() {
   });
 }
 
-module.exports = { register, cutStatus, registerScheme, registerProtocol, ffmpeg, listTakes, exportCut, ensureCut, exportWhiteboard, whiteboardGraph, makeSeekable, findSilences };
+module.exports = { serveFile, register, cutStatus, registerScheme, registerProtocol, ffmpeg, listTakes, exportCut, ensureCut, exportWhiteboard, whiteboardGraph, makeSeekable, findSilences };
