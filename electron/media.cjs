@@ -148,7 +148,7 @@ function cutStatus(scriptPath, segs) {
   try {
     const prev = JSON.parse(fs.readFileSync(json, "utf8"));
     if (!fs.existsSync(out)) return null;
-    return { file: out, seconds: prev.seconds, fresh: sameSegs(prev.segments, segs) };
+    return { file: out, seconds: prev.seconds, fresh: sameSegs(prev.segments, segs), version: fs.statSync(out).mtimeMs };
   } catch { return null; }
 }
 

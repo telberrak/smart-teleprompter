@@ -58,7 +58,7 @@ export function Production({ script, view, scriptPath }: Props) {
   const [sel, setSel] = useState<string | null>(null);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [cut, setCut] = useState<{ file: string; seconds: number } | null>(null);
+  const [cut, setCut] = useState<{ file: string; seconds: number; version?: number } | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [tab, setTab] = useState<"media" | "text" | "audio" | "brand">("text");
   const [pane, setPane] = useState<"edit" | "export">("edit");
@@ -127,7 +127,7 @@ export function Production({ script, view, scriptPath }: Props) {
     if (!io) return;
     setCutState("checking");
     io.cutStatus(scriptPath, segs).then(st => {
-      setCut(st ? { file: st.file, seconds: st.seconds } : null);
+      setCut(st ? { file: st.file, seconds: st.seconds, version: st.version } : null);
       setCutState(!st ? "missing" : st.fresh ? "fresh" : "stale");
     }).catch(() => setCutState("missing"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -414,11 +414,13 @@ export function Production({ script, view, scriptPath }: Props) {
     if (!io || !prod) return;
     const files = await io.productionFiles(scriptPath).catch(() => [] as string[]);
     const names = files.map(f => f.split(/[\\/]/).pop()).join(", ");
-    if (!window.confirm(`Delete this video?\n\n${files.length ? `These go to the Recycle Bin: ${names}.\n\n` : ""}The timeline starts over (titles, music and your edits are removed). Your recordings and Review choices are kept.`)) return;
+    if (!window.confirm(`Delete this video?\n\n${files.length ? `These go to the Recycle Bin: ${names}.\n\n` : ""}The timeline starts over (titles, music and your edits are removed) and the cut is made again from your takes when you click Build. Your recordings and Review choices are kept.`)) return;
     try { if (files.length) await io.deleteProduction(scriptPath); } catch (e) { setError(String((e as Error).message ?? e)); return; }
     setResult(null); setShortFile(null); setSel(null); seek(0);
+    // The cut went too: the preview waits for "Build the cut".
+    if (files.length) { setCut(null); setCutState("missing"); }
     setProd(buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand }));
-    setRebuilt(`Done: video deleted${files.length ? ` (${files.length} file${files.length === 1 ? "" : "s"} in the Recycle Bin)` : ""}, timeline started over from your cut.`);
+    setRebuilt(`Done: video deleted${files.length ? ` (${files.length} file${files.length === 1 ? "" : "s"} in the Recycle Bin)` : ""}, timeline started over. Click "Build the cut" in the preview to make it again from your takes.`);
   };
 
   const doExport = async () => {
@@ -516,7 +518,7 @@ export function Production({ script, view, scriptPath }: Props) {
         <div className="pd-frame">
           {slideUrl && !drawing && <img className="pd-slide" src={slideUrl} style={slideStyle} alt={`Slide, step ${now?.slide?.step}`} />}
           {drawing && <canvas ref={drawRef} className="pd-slide" width={SW} height={SH} style={slideStyle} aria-label={`Slide, step ${now?.slide?.step}, drawing in`} />}
-          <video ref={videoRef} className={"pd-cam " + (now?.layout ?? "full") + " " + (now?.corner ?? "br")} src={cut ? mediaUrl(cut.file) : undefined}
+          <video ref={videoRef} className={"pd-cam " + (now?.layout ?? "full") + " " + (now?.corner ?? "br")} src={cut ? mediaUrl(cut.file) + (cut.version ? `?v=${Math.round(cut.version)}` : "") : undefined}
             playsInline preload="auto" onEnded={() => setPlaying(false)} />
           <canvas ref={overlayRef} className="pd-over" width={1920} height={1080} aria-hidden="true" />
           {building && <div className="pd-wait pd-building">Building the cut… {progress !== null ? Math.round(progress * 100) + "%" : ""}</div>}

@@ -314,7 +314,8 @@ async function exportShort(scriptPath, segs, onProgress, opts) {
 /** Everything Production wrote for a script (the recordings and the Review cut are not touched). */
 function productionFiles(scriptPath) {
   const dir = takesDir(scriptPath), base = baseName(scriptPath);
-  return [`${base}-final.mp4`, `${base}-short.mp4`, `${base}-thumbnail.png`, `${base}-description.txt`, `${base}-production.json`, `${base}-production`, `${base}-short`]
+  // The cut too, so the next build starts from your takes.
+  return [`${base}-cut.mp4`, `${base}-cut.json`, `${base}-cut.srt`, `${base}-final.mp4`, `${base}-short.mp4`, `${base}-thumbnail.png`, `${base}-description.txt`, `${base}-production.json`, `${base}-production`, `${base}-short`]
     .map(f => path.join(dir, f)).filter(f => fs.existsSync(f));
 }
 
@@ -323,7 +324,8 @@ function register() {
   ipcMain.handle("production:cut", async (e, scriptPath, segs) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     const r = await media.ensureCut(scriptPath, segs, x => win?.webContents.send("export:progress", x), null);
-    return { file: r.file, seconds: r.seconds };
+    // The file's time tells the preview to load the new video, not a cached copy of the old one.
+    return { file: r.file, seconds: r.seconds, version: fs.statSync(r.file).mtimeMs };
   });
   ipcMain.handle("production:pickMusic", async () => {
     const r = await dialog.showOpenDialog({ title: "Choose a music file you own or have a licence for",

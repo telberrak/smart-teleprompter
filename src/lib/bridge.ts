@@ -48,11 +48,11 @@ export interface TakesBridge {
   exportCut(scriptPath: string | null, segs: Segment[], opts?: { srt?: string; burn?: boolean }): Promise<ExportResult>;
   exportWhiteboard(scriptPath: string | null, segs: Segment[], opts: WhiteboardOptions): Promise<WhiteboardResult>;
   /** The joined cut for the Production preview (made, or reused when unchanged). */
-  productionCut(scriptPath: string | null, segs: Segment[]): Promise<{ file: string; seconds: number }>;
+  productionCut(scriptPath: string | null, segs: Segment[]): Promise<{ file: string; seconds: number; version?: number }>;
   pickMusic(): Promise<string | null>;
   exportProduction(scriptPath: string | null, segs: Segment[], opts: ProductionOptions): Promise<ProductionResult>;
   /** The cut on disk, and whether it matches these segments (never builds). */
-  cutStatus(scriptPath: string | null, segs: Segment[]): Promise<{ file: string; seconds: number; fresh: boolean } | null>;
+  cutStatus(scriptPath: string | null, segs: Segment[]): Promise<{ file: string; seconds: number; fresh: boolean; version?: number } | null>;
   /** Files Production has written for this script. */
   productionFiles(scriptPath: string | null): Promise<string[]>;
   /** Send them to the Recycle Bin. */
