@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import type { Script } from "../lib/script";
 import type { SlideView } from "./ScreenCard";
-import { takes as io, mediaUrl, type ProductionResult } from "../lib/bridge";
+import { takes as io, mediaUrl, type ProductionOptions, type ProductionResult } from "../lib/bridge";
 import { buildEdit, timeline, type Segment, type TakeInfo } from "../lib/edit";
 import { useReview } from "../lib/reviewState";
 import { refit } from "../lib/production";
 import { cues, toSrt } from "../lib/captions";
 import { loadCorner, CORNERS, type Corner } from "../lib/bubble";
-import { bubblePngs, stepPng } from "../lib/slideImage";
+import { bubblePngs, drawFrame, drawInFrames, stepPng, W as SW, H as SH } from "../lib/slideImage";
+import { busyAt, plan as drawPlan, timedWords, type DrawMode, type Planned } from "../lib/drawOn";
+import type { Frame } from "../lib/excalidraw";
 import { drawCaption, drawTitle, shortHeaderPng, thumbnailPng, titlePng } from "../lib/titleArt";
 import { SHORT_LAYOUT, SHORT_MAX, captionYAt, shortAss, shortCues, shortPieces, shortSeconds, stressedWords, suggestShort } from "../lib/short";
 import {
@@ -252,6 +254,41 @@ export function Production({ script, view, scriptPath }: Props) {
     return view.slides && fi !== undefined && fi >= 0 ? view.slides.frames[fi] : undefined;
   }, [view]);
   const checks = useMemo(() => (prod ? proChecks(prod, script, segs, frameFor) : []), [prod, script, segs, frameFor]);
+
+  // Drawing plans: each run of slide clips showing the same Excalidraw frame draws in once,
+  // its parts timed to when you name them (see drawOn.ts).
+  const words = useMemo(() => timedWords(segs, n => S[n - 1]?.spoken ?? ""), [segs, S]);
+  const plans = useMemo(() => {
+    const out = new Map<string, { frame: Frame; plan: Planned[] }>();
+    if (!prod) return out;
+    const list = clipsOn(prod, "slides");
+    for (let i = 0; i < list.length;) {
+      const frame = frameFor(list[i].step);
+      let j = i + 1;
+      while (j < list.length && frame && frameFor(list[j].step) === frame && Math.abs(list[j].start - list[j - 1].end) < 0.05) j++;
+      const mode: DrawMode = list[i].draw ?? "said";
+      if (frame && mode !== "still") {
+        const plan = drawPlan(frame, mode, list[i].start, list[j - 1].end, words);
+        for (let k = i; k < j; k++) out.set(list[k].id, { frame, plan });
+      }
+      i = j;
+    }
+    return out;
+  }, [prod, frameFor, words]);
+  const drawRef = useRef<HTMLCanvasElement>(null);
+  const drawnAt = useRef<{ id: string; t: number } | null>(null);
+  const curSlide = prod ? at(prod, t).slide : undefined;
+  const curDraw = curSlide ? plans.get(curSlide.id) : undefined;
+  useEffect(() => {
+    const c = drawRef.current;
+    if (!c || !curDraw || !curSlide) return;
+    // Redraw only while something is drawing in, or when jumping.
+    const last = drawnAt.current;
+    if (last && last.id === curSlide.id && Math.abs(last.t - t) < 2 && !busyAt(curDraw.plan, t) && !busyAt(curDraw.plan, last.t)
+      && curDraw.plan.every(p => (p.start + p.dur <= t) === (p.start + p.dur <= last.t) && (p.start <= t) === (p.start <= last.t))) return;
+    drawFrame(c.getContext("2d")!, curDraw.frame, SW, SH, { plan: curDraw.plan, t });
+    drawnAt.current = { id: curSlide.id, t };
+  });
   const chs = useMemo(() => chapters(segs, script), [segs, script]);
 
   // The vertical Short: the picked sentences, 9:16, big captions.
@@ -300,8 +337,11 @@ export function Production({ script, view, scriptPath }: Props) {
     try {
       if (outs.short) await doShort();
       if (!outs.mp4 && !outs.srt && !outs.txt && !outs.png) return;
-      const slides: Uint8Array[] = [];
-      for (const s of clipsOn(prod, "slides")) slides.push(await stepPng(script, view, s.step));
+      const slides: ProductionOptions["slides"] = [];
+      for (const s of clipsOn(prod, "slides")) {
+        const d = plans.get(s.id);
+        slides.push(d ? await drawInFrames(d.frame, d.plan, s.start, s.end) : await stepPng(script, view, s.step));
+      }
       const titles: Uint8Array[] = [];
       for (const ti of clipsOn(prod, "titles")) titles.push(await titlePng(ti, prod.brand));
       const { mask, ring } = await bubblePngs(360);
@@ -366,6 +406,7 @@ export function Production({ script, view, scriptPath }: Props) {
   );
 
   const slideUrl = now?.slide ? slideUrls.current.get(now.slide.step) : undefined;
+  const drawing = now?.slide ? plans.get(now.slide.id) : undefined;
   const sinceSlide = now?.slide ? t - now.slide.start : 0;
   const slideStyle = now?.slide ? {
     opacity: now.slide.enter === "fade" ? Math.min(1, sinceSlide / 0.4) : 1,
@@ -376,7 +417,8 @@ export function Production({ script, view, scriptPath }: Props) {
       <div className="ph"><h2>Preview</h2><span className="meta">16:9 · 1080p30{music ? " · music ducking is heard in the export" : ""}</span></div>
       <div className="pd-stage">
         <div className="pd-frame">
-          {slideUrl && <img className="pd-slide" src={slideUrl} style={slideStyle} alt={`Slide, step ${now?.slide?.step}`} />}
+          {slideUrl && !drawing && <img className="pd-slide" src={slideUrl} style={slideStyle} alt={`Slide, step ${now?.slide?.step}`} />}
+          {drawing && <canvas ref={drawRef} className="pd-slide" width={SW} height={SH} style={slideStyle} aria-label={`Slide, step ${now?.slide?.step}, drawing in`} />}
           <video ref={videoRef} className={"pd-cam " + (now?.layout ?? "full") + " " + (now?.corner ?? "br")} src={cut ? mediaUrl(cut.file) : undefined}
             playsInline preload="auto" onEnded={() => setPlaying(false)} />
           <canvas ref={overlayRef} className="pd-over" width={1920} height={1080} aria-hidden="true" />
@@ -419,6 +461,8 @@ export function Production({ script, view, scriptPath }: Props) {
             <span className="small-note">Split this clip (S) to change the layout for part of the video, e.g. full screen for a key sentence.</span>
           </>}
           {selected.track === "slides" && <>
+            {frameFor(selected.step) && <label className="pd-field">Drawing<select value={selected.draw ?? "said"} onChange={e => patch({ draw: e.target.value as DrawMode })}>
+              <option value="said">Draws in as you name each part</option><option value="quick">Draws in quickly, part by part</option><option value="still">Shows whole (no drawing)</option></select></label>}
             <label className="pd-field">Comes in<select value={selected.enter} onChange={e => patch({ enter: e.target.value as "fade" })}><option value="fade">Fade</option><option value="cut">Cut</option></select></label>
             <label className="pd-field">Motion<select value={selected.motion} onChange={e => patch({ motion: e.target.value as "none" })}><option value="none">Still</option><option value="zoom">Slow zoom in</option></select></label>
             <label className="pd-field">Camera bubble here<select value={selected.corner ?? ""} onChange={e => patch({ corner: (e.target.value || undefined) as Corner | undefined })}><option value="">Same as camera</option>{CORNERS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>

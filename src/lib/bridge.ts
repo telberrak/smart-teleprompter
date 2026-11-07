@@ -73,8 +73,9 @@ export interface WhiteboardOptions {
 }
 export interface ProductionOptions {
   production: Production;
-  /** One PNG per slide clip and per title clip, in start order. */
-  slides: Uint8Array[];
+  /** Per slide clip, in start order: a still PNG, or JPEG pictures with how long each shows (drawing in). */
+  slides: (Uint8Array | { img: Uint8Array; dur: number }[])[];
+  /** One PNG per title clip, in start order. */
   titles: Uint8Array[];
   mask: Uint8Array;
   ring: Uint8Array;

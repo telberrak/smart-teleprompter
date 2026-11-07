@@ -32,11 +32,17 @@ export type Sound = "whoosh" | "pop";
 interface Base { id: string; start: number; end: number }
 export interface TitleClip extends Base { track: "titles"; kind: TitleKind; text: string; sub: string }
 export interface CameraClip extends Base { track: "camera"; layout: CameraLayout; corner: Corner }
-export interface SlideClip extends Base { track: "slides"; step: number; enter: SlideEnter; motion: SlideMotion; /** Bubble corner over this slide, if different from the camera's. */ corner?: Corner }
+export interface SlideClip extends Base {
+  track: "slides"; step: number; enter: SlideEnter; motion: SlideMotion;
+  /** Bubble corner over this slide, if different from the camera's. */ corner?: Corner;
+  /** How the drawing comes in: as you name its parts, quickly one after another, or whole. Default "said". */
+  draw?: DrawMode;
+}
 export interface VoiceClip extends Base { track: "voice"; clean: boolean; loudness: -14 | -16 }
 export interface MusicClip extends Base { track: "music"; file: string; volume: number; duck: Duck; fadeOut: number }
 export interface SfxClip extends Base { track: "sfx"; sound: Sound; volume: number }
 export interface CaptionClip extends Base { track: "captions"; style: CaptionStyle }
+import type { DrawMode } from "./drawOn";
 export type Clip = TitleClip | CameraClip | SlideClip | VoiceClip | MusicClip | SfxClip | CaptionClip;
 
 export interface Brand {

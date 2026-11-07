@@ -197,6 +197,18 @@ lays it out on seven lanes: titles, camera, slides, voice, music, sound effects 
 
 Use only music you own or have a licence for.
 
+### Diagrams that draw themselves
+
+Excalidraw slides draw in, in the preview and in `NAME-final.mp4`: each box, arrow and label is
+traced like a pen on a whiteboard. Pick how for each slide in the Inspector (**Drawing**):
+
+- **When you say it** (default): a box draws in when you say its label ("…the *cache*…"),
+  the slide title first, an arrow just before the box it points to; parts you never name fill in between.
+- **One after another**: everything draws in quickly as the slide appears, in reading order.
+- **Still**: the whole slide at once, as before.
+
+A text next to a box (like a "?") draws with that box. The Short and Review's whiteboard video still use still slides.
+
 ### Vertical Short
 
 Tick **Vertical Short** in Polish & export to also get `NAME-short.mp4`: 1080x1920, up to 60 s.
@@ -217,6 +229,8 @@ with big captions two or three words at a time and your stressed words in the ac
 8. ✅ Vertical Short (9:16, up to 60 s) from the best sentences
 
 ## To do
+
+- Drawing in for the vertical Short and Review's whiteboard video (they show still slides).
 
 - Loudness: the export levels in one pass, so a short clip can land about 1 dB above the
   target (−12.9 LUFS for −14 on an 8 s test). Fix: measure first, then level (two-pass loudnorm).

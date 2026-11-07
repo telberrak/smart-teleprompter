@@ -134,6 +134,8 @@ async function exportProduction(scriptPath, segs, onProgress, opts) {
   const cut = await media.ensureCut(scriptPath, segs, x => onProgress(x * 0.25), opts.srt);
   const work = `${base}-production`;
   fs.mkdirSync(path.join(dir, work), { recursive: true });
+  // Drawing pictures from an earlier export.
+  for (const f of fs.readdirSync(path.join(dir, work))) if (/^slide-\d+-\d+\.jpg$/.test(f)) fs.rmSync(path.join(dir, work, f), { force: true });
   const put = (name, bytes) => { fs.writeFileSync(path.join(dir, work, name), Buffer.from(bytes)); return `${work}/${name}`; };
   const out = { srt: null, txt: null, png: null, file: null };
 
@@ -149,7 +151,22 @@ async function exportProduction(scriptPath, segs, onProgress, opts) {
   let n = 1;
   const ix = { slide: [], title: [] };
   slides.forEach((s, i) => {
-    args.push("-loop", "1", "-framerate", "30", "-t", f3(s.end - s.start + 0.2), "-i", put(`slide-${i + 1}.png`, opts.slides[i]));
+    const pic = opts.slides[i];
+    if (Array.isArray(pic)) {
+      // Drawing in: pictures with their own durations, through the concat demuxer.
+      const lines = ["ffconcat version 1.0"];
+      pic.forEach((f, k) => {
+        const name = `slide-${i + 1}-${String(k + 1).padStart(4, "0")}.jpg`;
+        put(name, f.img);
+        lines.push(`file '${name}'`, `duration ${f.dur.toFixed(4)}`);
+      });
+      // The last picture is listed again so its duration counts.
+      lines.push(`file 'slide-${i + 1}-${String(pic.length).padStart(4, "0")}.jpg'`);
+      fs.writeFileSync(path.join(dir, work, `slide-${i + 1}.txt`), lines.join("\n") + "\n");
+      args.push("-f", "concat", "-safe", "0", "-i", `${work}/slide-${i + 1}.txt`);
+    } else {
+      args.push("-loop", "1", "-framerate", "30", "-t", f3(s.end - s.start + 0.2), "-i", put(`slide-${i + 1}.png`, pic));
+    }
     ix.slide.push(n++);
   });
   titles.forEach((c, i) => {
