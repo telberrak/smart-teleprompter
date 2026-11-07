@@ -38,6 +38,32 @@ function productionGraph(p, ix) {
   const voice = clips("voice")[0], music = clips("music")[0], sfx = clips("sfx"), cap = clips("captions")[0];
   const parts = [];
 
+  // 0. Pauses: the cut is cut at each one; the picture holds its last frame and the sound is silent.
+  let V = "0:v", A = "0:a";
+  const gaps = [...(p.gaps || [])].filter(g => g.dur > 0.01).sort((a, b) => a.cut - b.cut);
+  if (gaps.length) {
+    const cutLen = total - gaps.reduce((a, g) => a + g.dur, 0);
+    const segsOut = [];
+    let from = 0;
+    for (const g of gaps) {
+      if (g.cut - from > 0.02) segsOut.push({ a: from, b: g.cut, pad: g.dur });
+      else if (segsOut.length) segsOut[segsOut.length - 1].pad += g.dur;
+      else segsOut.push({ a: 0, b: Math.min(0.04, cutLen), pad: g.dur }); // a pause at the very start holds the first frame
+      from = Math.max(from, g.cut);
+    }
+    if (cutLen - from > 0.02) segsOut.push({ a: from, b: null, pad: 0 });
+    const k = segsOut.length, cam = !!p.hasCamera;
+    if (cam) parts.push(`[0:v]split=${k}${segsOut.map((_, i) => `[gv${i}]`).join("")}`);
+    parts.push(`[0:a]aresample=48000,aformat=channel_layouts=stereo,asplit=${k}${segsOut.map((_, i) => `[ga${i}]`).join("")}`);
+    segsOut.forEach((x, i) => {
+      const rng = `start=${f3(x.a)}${x.b !== null ? `:end=${f3(x.b)}` : ""}`;
+      if (cam) parts.push(`[gv${i}]trim=${rng},setpts=PTS-STARTPTS${x.pad ? `,tpad=stop_mode=clone:stop_duration=${f3(x.pad)}` : ""}[gw${i}]`);
+      parts.push(`[ga${i}]atrim=${rng},asetpts=PTS-STARTPTS${x.pad ? `,apad=pad_len=${Math.round(x.pad * 48000)}` : ""}[gb${i}]`);
+    });
+    parts.push(`${segsOut.map((_, i) => (cam ? `[gw${i}]` : "") + `[gb${i}]`).join("")}concat=n=${k}:v=${cam ? 1 : 0}:a=1${cam ? "[tv]" : ""}[ta]`);
+    V = "tv"; A = "ta";
+  }
+
   // 1. Background: slides in order, white where there is none.
   const bg = []; let t = 0, gi = 0;
   const gap = d => { if (d > 0.001) { parts.push(`color=c=white:s=1920x1080:r=30:d=${f3(d)},format=yuv420p,setsar=1[g${gi}]`); bg.push(`[g${gi++}]`); } };
@@ -70,7 +96,7 @@ function productionGraph(p, ix) {
   }
   const corners = [...new Set(bubbles.map(b => b.corner))];
   const camUses = (full.length ? 1 : 0) + corners.length;
-  if (camUses) parts.push(`[0:v]split=${camUses}${Array.from({ length: camUses }, (_, i) => `[cam${i}]`).join("")}`);
+  if (camUses) parts.push(`[${V}]split=${camUses}${Array.from({ length: camUses }, (_, i) => `[cam${i}]`).join("")}`);
   let ci = 0;
   if (full.length) {
     parts.push(`[cam${ci++}]setsar=1,format=yuv420p[full]`);
@@ -107,7 +133,7 @@ function productionGraph(p, ix) {
     ? "highpass=f=80,afftdn=nf=-25,acompressor=threshold=-20dB:ratio=3:attack=5:release=120:makeup=2"
     : "anull";
   const duck = music && ix.music !== undefined && music.duck !== "off";
-  parts.push(`[0:a]aresample=48000,aformat=channel_layouts=stereo,${vchain}${duck ? ",asplit=2[vo][vsc]" : "[vo]"}`);
+  parts.push(`[${A}]aresample=48000,aformat=channel_layouts=stereo,${vchain}${duck ? ",asplit=2[vo][vsc]" : "[vo]"}`);
   mix.push("[vo]");
   if (music && ix.music !== undefined) {
     const fade = Math.min(music.fadeOut || 3, total / 2);

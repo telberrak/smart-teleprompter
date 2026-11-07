@@ -189,6 +189,9 @@ lays it out on seven lanes: titles, camera, slides, voice, music, sound effects 
 - **Toolbar and keys (like CapCut)**: undo `Ctrl+Z` / redo `Ctrl+Shift+Z`, split `S` or `Ctrl+B`,
   trim left `Q` / trim right `W` (cut the selected clip at the playhead), duplicate `Ctrl+D`, `Delete`,
   marker `M`, zoom `−` / `+`, `←` `→` one frame (`Shift`: one second), `↑` `↓` previous / next edge, `Home` / `End`.
+- **Pauses**: **Add pause** (`P`) puts 1 s at the playhead: the picture holds its frame, your voice is silent
+  (music plays on) and everything after moves right. At the very end it adds time after your last word, so you can
+  move the outro (or any title) there. Click a pause on the Voice lane to change its length or remove it.
 - **Lanes**: 🔒 locks a lane against edits; ◉ hides a lane (🔊 mutes music or sound effects) in the preview and the export.
 - **Inspector**: change the selected clip, e.g. camera full screen or bubble for part of the video,
   a slow zoom on a slide, music volume and ducking, caption style.

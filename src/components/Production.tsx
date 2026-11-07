@@ -14,7 +14,7 @@ import type { Frame } from "../lib/excalidraw";
 import { drawCaption, drawTitle, shortHeaderPng, thumbnailPng, titlePng } from "../lib/titleArt";
 import { SHORT_LAYOUT, SHORT_MAX, captionYAt, shortAss, shortCues, shortPieces, shortSeconds, stressedWords, suggestShort } from "../lib/short";
 import {
-  TRACKS, DEFAULT_BRAND, add, applyTracks, at, canTurnOff, deletable, duplicate, isLocked, isOff, setTrack, toggleMarker, trim, trimmable, buildProduction, chapters, clipsOn, cutKey, description, move, proChecks, remove, snap, snapPoints, split, update,
+  TRACKS, DEFAULT_BRAND, add, applyTracks, cutAt, gapSpans, insertGap, removeGap, setGapDur, tlOf, at, canTurnOff, deletable, duplicate, isLocked, isOff, setTrack, toggleMarker, trim, trimmable, buildProduction, chapters, clipsOn, cutKey, description, move, proChecks, remove, snap, snapPoints, split, update,
   type Brand, type Clip, type Production as Prod, type TitleKind, type TrackId,
 } from "../lib/production";
 
@@ -167,28 +167,74 @@ export function Production({ script, view, scriptPath }: Props) {
   }, [prod, script, view]);
   useEffect(() => () => { slideUrls.current.forEach(u => URL.revokeObjectURL(u)); slideUrls.current.clear(); }, [script, view]);
 
-  // Playback clock: the cut video drives the time.
+  // Playback clock: the cut video drives the time; during a pause the picture holds and a clock runs on.
+  const pauseRef = useRef<{ start: number; end: number; clock: number } | null>(null);
+  const lastC = useRef(0);
+  const prodNow = useRef<Prod | null>(null);
+  prodNow.current = prod;
   useEffect(() => {
     if (!playing) return;
     let raf = 0;
-    const tick = () => { const v = videoRef.current; if (v) setT(v.currentTime); raf = requestAnimationFrame(tick); };
+    const tick = () => {
+      const v = videoRef.current, p = prodNow.current;
+      if (v && p) {
+        const g = pauseRef.current;
+        if (g) {
+          const x = g.start + (performance.now() - g.clock) / 1000;
+          if (x >= p.seconds) { setT(p.seconds); pauseRef.current = null; musicRef.current?.pause(); setPlaying(false); return; }
+          if (x >= g.end) { pauseRef.current = null; void v.play(); }
+          setT(Math.min(x, g.end));
+        } else {
+          const c = v.currentTime;
+          // Reaching a pause (or the end of the cut with room after it): hold the frame.
+          const span = gapSpans(p).find(x => x.cut > lastC.current && (c >= x.cut - 0.02 || v.ended));
+          lastC.current = c;
+          if (span) {
+            v.pause(); v.currentTime = span.cut; lastC.current = span.cut;
+            pauseRef.current = { start: span.start, end: span.end, clock: performance.now() };
+            setT(span.start);
+          } else if (v.ended || tlOf(p, c) >= p.seconds) { setT(p.seconds); musicRef.current?.pause(); setPlaying(false); return; }
+          else setT(tlOf(p, c));
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [playing]);
   const seek = (x: number) => {
     const s = Math.max(0, Math.min(prod?.seconds ?? 0, x));
     setT(s);
-    if (videoRef.current) videoRef.current.currentTime = s;
+    const at = prod ? cutAt(prod, s) : { c: s };
+    pauseRef.current = null;
+    lastC.current = at.gap ? at.c : at.c - 1e-4;
+    if (videoRef.current) videoRef.current.currentTime = at.c;
+    if (playing && videoRef.current) {
+      if (at.gap) { videoRef.current.pause(); pauseRef.current = { start: s, end: at.gap.end, clock: performance.now() }; }
+      else void videoRef.current.play();
+    }
     if (musicRef.current) musicRef.current.currentTime = s;
   };
   const togglePlay = () => {
     const v = videoRef.current, m = musicRef.current;
-    if (!v) return;
-    if (playing) { v.pause(); m?.pause(); setPlaying(false); }
-    else { v.currentTime = t; void v.play(); if (m) { m.currentTime = t; void m.play(); } setPlaying(true); }
+    if (!v || !prod) return;
+    if (playing) { v.pause(); m?.pause(); pauseRef.current = null; setPlaying(false); return; }
+    const from = t >= prod.seconds - 0.05 ? 0 : t;
+    const at = cutAt(prod, from);
+    v.currentTime = at.c;
+    lastC.current = at.gap ? at.c : at.c - 1e-4;
+    if (at.gap) pauseRef.current = { start: from, end: at.gap.end, clock: performance.now() };
+    else { pauseRef.current = null; void v.play(); }
+    if (m) { m.currentTime = from; void m.play(); }
+    setT(from); setPlaying(true);
   };
 
-  const capList = useMemo(() => cues(segs, n => S[n - 1]?.spoken ?? ""), [segs, S]);
+  // Captions on the timeline's clock (after pauses they come later).
+  const gapsNow = prod?.gaps;
+  const capList = useMemo(() => {
+    const g = { gaps: gapsNow } as Prod;
+    return cues(segs, n => S[n - 1]?.spoken ?? "").map(q => ({ ...q, start: tlOf(g, q.start), end: tlOf(g, q.end, true) }));
+  }, [segs, S, gapsNow]);
   // What plays: hidden or muted lanes left out.
   const live = useMemo(() => (prod ? applyTracks(prod) : null), [prod]);
   const now = live ? at(live, t) : null;
@@ -253,11 +299,14 @@ export function Production({ script, view, scriptPath }: Props) {
   };
 
   // Timeline dragging: titles and sound effects move, snapping to sentence edges.
-  const points = useMemo(() => snapPoints(segs), [segs]);
+  const points = useMemo(() => {
+    const g = { gaps: gapsNow } as Prod;
+    return [...snapPoints(segs).map(x => tlOf(g, x)), ...snapPoints(segs).map(x => tlOf(g, x, true))];
+  }, [segs, gapsNow]);
   // Every clip but voice and captions can be trimmed by its edges; titles, sound effects and music also move.
   const drag = useRef<{ id: string; x0: number; s0: number; moved: boolean; mode: "move" | "start" | "end" } | null>(null);
   const onClipDown = (e: RPointerEvent, c: Clip) => {
-    setSel(c.id);
+    setSel(c.id); setSelGap(null);
     if (prod && isLocked(prod, c.track)) return;
     if (c.track !== "titles" && c.track !== "sfx" && c.track !== "music") return;
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -291,7 +340,7 @@ export function Production({ script, view, scriptPath }: Props) {
     if (e.target !== e.currentTarget) return;
     const r = e.currentTarget.getBoundingClientRect();
     seek((e.clientX - r.left) / zoom);
-    setSel(null);
+    setSel(null); setSelGap(null);
   };
 
   // Editing actions (toolbar and keyboard), CapCut style.
@@ -304,6 +353,7 @@ export function Production({ script, view, scriptPath }: Props) {
   const [hint, setHint] = useState("");
   useEffect(() => { if (!hint) return; const id = setTimeout(() => setHint(""), 7000); return () => clearTimeout(id); }, [hint]);
   const doDelete = () => {
+    if (selGap !== null) { setProd(q => removeGap(q, selGap)); setSelGap(null); return; }
     if (!selected) return;
     if (selLocked) { setHint("This lane is locked: unlock it (🔒) to delete."); return; }
     if (selected.track === "camera") {
@@ -323,6 +373,14 @@ export function Production({ script, view, scriptPath }: Props) {
     if (next !== prod) { setProd(next); setSel(next.clips.at(-1)!.id); }
   };
   const marker = () => setProd(q => toggleMarker(q, t));
+  // Pauses: added at the playhead (at the end: room after your last word).
+  const [selGap, setSelGap] = useState<number | null>(null);
+  const addPause = (d = 1) => {
+    if (!prod) return;
+    if (t < 0.05) { setHint("Move the playhead a little after the start to add a pause."); return; }
+    setProd(q => insertGap(q, t, d));
+    setHint(t >= prod.seconds - 0.05 ? `Added ${d} s at the end: you can now move titles (like the outro) there.` : `Added a ${d} s pause: the picture holds and everything after moves right. Click it on the Voice lane to change its length.`);
+  };
   const zoomBy = (k: number) => { const z = Math.max(1, Math.min(60, +(zoom * k).toFixed(2))); setZoom(z); store.set("tp.zoom", z); };
   /** Jump to the previous or next sentence edge, clip edge or marker. */
   const jump = (dir: -1 | 1) => {
@@ -349,6 +407,7 @@ export function Production({ script, view, scriptPath }: Props) {
       else if (key === "q") trimLeft();
       else if (key === "w") trimRight();
       else if (key === "m") marker();
+      else if (key === "p") addPause(1);
       else if (e.key === "Delete" || e.key === "Backspace") doDelete();
       else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); seek(t + (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 1 : 1 / 30)); }
       else if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); jump(e.key === "ArrowUp" ? -1 : 1); }
@@ -372,7 +431,7 @@ export function Production({ script, view, scriptPath }: Props) {
   // its parts timed to when you name them (see drawOn.ts).
   const delay = prod?.drawDelay ?? 0.3;
   const words = useMemo(() => timedWords(segs, n => (S[n - 1]?.tokens ?? []).map(k => (k.type === "word" ? { type: "word" as const, text: k.text } : k.type === "pause" ? { type: "pause" as const, secs: k.secs } : { type: "breath" as const })))
-    .map(w => ({ ...w, t: w.t + delay })), [segs, S, delay]);
+    .map(w => ({ ...w, t: tlOf({ gaps: gapsNow } as Prod, w.t) + delay })), [segs, S, delay, gapsNow]);
   const plans = useMemo(() => {
     const out = new Map<string, { frame: Frame; plan: Planned[] }>();
     if (!prod) return out;
@@ -404,7 +463,7 @@ export function Production({ script, view, scriptPath }: Props) {
     drawFrame(c.getContext("2d")!, curDraw.frame, SW, SH, { plan: curDraw.plan, t });
     drawnAt.current = { id: curSlide.id, t };
   });
-  const chs = useMemo(() => chapters(segs, script), [segs, script]);
+  const chs = useMemo(() => chapters(segs, script).map(c => ({ ...c, start: tlOf({ gaps: gapsNow } as Prod, c.start) })), [segs, script, gapsNow]);
 
   // The vertical Short: the picked sentences, 9:16, big captions.
   const shortPicks = prod ? prod.short ?? suggestShort(segs, script) : [];
@@ -477,7 +536,7 @@ export function Production({ script, view, scriptPath }: Props) {
       exportJob.set({ stage: "Exporting", progress: 0 });
       const res = await io.exportProduction(scriptPath, segs, {
         production: prod, slides, titles, mask, ring, srt: toSrt(capList), description: description(prod, segs, script),
-        thumbnail: { png, at: th.at, corner }, outputs: outs,
+        thumbnail: { png, at: cutAt(prod, th.at).c, corner }, outputs: outs,
       });
       exportJob.set({ running: false, progress: 1, stage: "Done", result: res });
     } catch (e) { exportJob.set({ running: false, stage: "Failed", error: String((e as Error).message ?? e) }); }
@@ -548,7 +607,7 @@ export function Production({ script, view, scriptPath }: Props) {
           {slideUrl && !drawing && <img className="pd-slide" src={slideUrl} style={slideStyle} alt={`Slide, step ${now?.slide?.step}`} />}
           {drawing && <canvas ref={drawRef} className="pd-slide" width={SW} height={SH} style={slideStyle} aria-label={`Slide, step ${now?.slide?.step}, drawing in`} />}
           <video ref={videoRef} className={"pd-cam " + (now?.layout ?? "full") + " " + (now?.corner ?? "br")} src={cut ? mediaUrl(cut.file) + (cut.version ? `?v=${Math.round(cut.version)}` : "") : undefined}
-            playsInline preload="auto" onEnded={() => setPlaying(false)} />
+            playsInline preload="auto" onEnded={() => { if (!pauseRef.current && !(prod?.gaps ?? []).length) setPlaying(false); }} />
           <canvas ref={overlayRef} className="pd-over" width={1920} height={1080} aria-hidden="true" />
           {building && <div className="pd-wait pd-building">Building the cut… {progress !== null ? Math.round(progress * 100) + "%" : ""}</div>}
           {!building && needsRebuild && cutState !== "checking" && (
@@ -571,7 +630,15 @@ export function Production({ script, view, scriptPath }: Props) {
 
   const insp = (
     <div className="panel pd-insp">
-      {!selected ? <>
+      {selGap !== null && prod.gaps?.[selGap] ? <>
+        <div className="ph"><span className="label">Pause</span><h2>{prod.gaps[selGap].cut >= prod.seconds - prod.gaps.reduce((a, g) => a + g.dur, 0) - 0.05 ? "Room after the last word" : "Pause in the video"}</h2></div>
+        <div className="pd-props">
+          <label className="pd-field">Length (seconds)<input type="number" min={0.1} max={30} step={0.1} value={prod.gaps[selGap].dur}
+            onChange={e => { const d = Math.max(0.1, Math.min(30, +e.target.value || 0.1)); setProd(q => setGapDur(q, selGap, d)); }} /></label>
+          <span className="small-note">The picture holds its frame and the sound is silent (music keeps playing). Titles, slides and sounds after it move with it.</span>
+          <button className="btn ghost" onClick={doDelete}>Remove pause</button>
+        </div>
+      </> : !selected ? <>
         <div className="ph"><h2>Inspector</h2></div>
         <p className="pd-hint">Click a clip on the timeline to change it. Drag titles and sound effects to move them; they snap to sentence edges. <kbd>Space</kbd> plays, <kbd>S</kbd> splits at the playhead, <kbd>Delete</kbd> removes.</p>
       </> : <>
@@ -636,11 +703,12 @@ export function Production({ script, view, scriptPath }: Props) {
         <button className="btn ghost" onClick={trimLeft} disabled={!canEdit || !selected || !trimmable(selected) || t <= selected.start || t >= selected.end} title="Cut off the part of the selected clip before the playhead (Q)">Trim left <kbd>Q</kbd></button>
         <button className="btn ghost" onClick={trimRight} disabled={!canEdit || !selected || !trimmable(selected) || t <= selected.start || t >= selected.end} title="Cut off the part of the selected clip after the playhead (W)">Trim right <kbd>W</kbd></button>
         <button className="btn ghost" onClick={doDuplicate} disabled={!canEdit || !selected || !["titles", "sfx", "music"].includes(selected.track)} title="Copy the selected title or sound right after it (Ctrl+D)">Duplicate</button>
-        <button className="btn ghost" onClick={doDelete} disabled={!selected} title="Delete the selected clip (Delete). On the camera lane it removes the camera from that piece.">Delete</button>
+        <button className="btn ghost" onClick={doDelete} disabled={!selected && selGap === null} title="Delete the selected clip (Delete). On the camera lane it removes the camera from that piece.">Delete</button>
         <span className="pd-sep" />
         <button className="btn ghost" onClick={marker} title="Add a marker at the playhead, or remove the one there (M)">Marker <kbd>M</kbd></button>
+        <button className="btn ghost" onClick={() => addPause(1)} title="Add a 1 s pause at the playhead: the picture holds, sound is silent, everything after moves right. At the very end it adds time after your last word (P)">Add pause <kbd>P</kbd></button>
         <button className={"btn ghost" + (magnet ? " on" : "")} aria-pressed={magnet} onClick={() => setMagnet(!magnet)}>Snap to sentences</button>
-        {hint && <span className="pd-hint" role="status">{hint}</span>}
+        {hint && <span className="pd-toolhint" role="status">{hint}</span>}
         <span className="pd-spacer" />
         <button className="btn ghost ic" onClick={() => zoomBy(0.8)} title="Zoom out (−)" aria-label="Zoom out">−</button>
         <label className="pd-zoom"><span className="sr">Zoom</span><input type="range" min={1} max={60} step={0.5} value={zoom} onChange={e => { setZoom(+e.target.value); store.set("tp.zoom", +e.target.value); }} /></label>
@@ -688,6 +756,12 @@ export function Production({ script, view, scriptPath }: Props) {
                       <span className="pd-trim l" title="Drag to change where it starts" onPointerDown={e => onEdgeDown(e, c, "start")} />
                       <span className="pd-trim r" title="Drag to change where it ends" onPointerDown={e => onEdgeDown(e, c, "end")} />
                     </>}
+                  </button>
+                ))}
+                {tr.id === "voice" && gapSpans(prod).map(g => (
+                  <button key={"gap" + g.i} className={"pd-gap" + (selGap === g.i ? " sel" : "")} style={{ left: g.start * zoom, width: Math.max(6, g.dur * zoom) }}
+                    title={`Pause, ${g.dur.toFixed(1)} s: click to change its length`} onPointerDown={e => { e.stopPropagation(); setSel(null); setSelGap(g.i); }}>
+                    {g.dur * zoom > 40 ? `Pause ${g.dur.toFixed(1)}s` : "‖"}
                   </button>
                 ))}
               </div>

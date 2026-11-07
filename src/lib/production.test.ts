@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseScript } from "./script";
-import { at, bestCorner, refit, buildProduction, chapterName, chapters, clipsOn, description, move, proChecks, snap, split, trim, update, applyTracks, duplicate, setTrack, toggleMarker } from "./production";
+import { at, bestCorner, refit, buildProduction, chapterName, chapters, clipsOn, description, move, proChecks, snap, split, trim, update, applyTracks, duplicate, setTrack, toggleMarker, insertGap, removeGap, setGapDur, tlOf, cutAt } from "./production";
 import type { Segment } from "./edit";
 import type { Frame } from "./excalidraw";
 
@@ -114,5 +114,30 @@ describe("lanes, markers, duplicate", () => {
     const copy = q.clips.at(-1)!;
     expect(copy.start).toBeCloseTo(Math.min(p.seconds - (ti.end - ti.start), ti.end));
     expect(copy.id).not.toBe(ti.id);
+  });
+});
+
+describe("pauses", () => {
+  const p = buildProduction(segs, script, { hasCamera: true, corner: "br" });
+  it("a pause in the middle moves what follows and maps times both ways", () => {
+    const q = insertGap(p, 5, 1.5);
+    expect(q.seconds).toBeCloseTo(p.seconds + 1.5);
+    expect(tlOf(q, 4)).toBeCloseTo(4);
+    expect(tlOf(q, 6)).toBeCloseTo(7.5);
+    expect(cutAt(q, 5.7).gap).toBeTruthy();
+    expect(cutAt(q, 5.7).c).toBeCloseTo(5);
+    expect(cutAt(q, 8).c).toBeCloseTo(6.5);
+    const back = removeGap(q, 0);
+    expect(back.seconds).toBeCloseTo(p.seconds);
+    expect(clipsOn(back, "slides").map(c => c.start)).toEqual(clipsOn(p, "slides").map(c => c.start));
+  });
+  it("a pause at the end makes room to move the outro later", () => {
+    const q = insertGap(p, p.seconds, 4);
+    expect(q.seconds).toBeCloseTo(p.seconds + 4);
+    expect(clipsOn(q, "voice")[0].end).toBeCloseTo(q.seconds);
+    expect(clipsOn(q, "camera").at(-1)!.end).toBeCloseTo(q.seconds);
+    const outro = clipsOn(q, "titles").find(c => c.kind === "outro")!;
+    expect(move(q, outro.id, q.seconds).clips.find(c => c.id === outro.id)!.end).toBeCloseTo(q.seconds);
+    expect(setGapDur(q, 0, 2).seconds).toBeCloseTo(p.seconds + 2);
   });
 });

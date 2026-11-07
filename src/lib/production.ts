@@ -68,10 +68,80 @@ export interface Production {
   short?: number[];
   /** Per lane: locked (no edits) and off (hidden or muted: left out of the preview and the export). */
   tracks?: Partial<Record<TrackId, { locked?: boolean; off?: boolean }>>;
+  /**
+   * Pauses added on the timeline: at a point of the cut (seconds of the cut), this long.
+   * The picture holds its frame and the sound is silent; a pause at the very end makes room after you finish talking.
+   */
+  gaps?: Gap[];
   /** Seconds the drawing waits after the word that names a part (default 0.3). */
   drawDelay?: number;
   /** Your own markers on the ruler, in seconds. */
   markers?: number[];
+}
+
+export interface Gap { cut: number; dur: number }
+
+const gapsOf = (p: Production) => [...(p.gaps ?? [])].sort((a, b) => a.cut - b.cut);
+/** Length of the cut itself (the timeline minus its pauses). */
+export const cutLength = (p: Production) => r3(p.seconds - (p.gaps ?? []).reduce((a, g) => a + g.dur, 0));
+/** Where a moment of the cut sits on the timeline (`end`: a moment that ends there, before a pause at it). */
+export function tlOf(p: Production, c: number, end = false): number {
+  let t = c;
+  for (const g of p.gaps ?? []) if (end ? g.cut < c - 1e-6 : g.cut <= c + 1e-6) t += g.dur;
+  return t;
+}
+/** The cut's moment at timeline time t, and the pause it falls in (if any). */
+export function cutAt(p: Production, t: number): { c: number; gap?: { start: number; end: number; cut: number } } {
+  let acc = 0;
+  for (const g of gapsOf(p)) {
+    const gs = g.cut + acc;
+    if (t < gs) return { c: t - acc };
+    if (t < gs + g.dur) return { c: g.cut, gap: { start: gs, end: gs + g.dur, cut: g.cut } };
+    acc += g.dur;
+  }
+  return { c: t - acc };
+}
+/** Pauses with their place on the timeline. */
+export function gapSpans(p: Production): { i: number; cut: number; dur: number; start: number; end: number }[] {
+  let acc = 0;
+  return gapsOf(p).map(g => { const start = g.cut + acc; acc += g.dur; return { i: (p.gaps ?? []).indexOf(g), cut: g.cut, dur: g.dur, start, end: start + g.dur }; });
+}
+
+/**
+ * Add a pause at timeline time t: what comes after moves right, clips that run across it get longer.
+ * Inside an existing pause it makes that pause longer. At the end it makes room after the last word.
+ */
+export function insertGap(p: Production, t: number, dur: number): Production {
+  if (dur <= 0) return p;
+  const here = cutAt(p, Math.min(t, p.seconds));
+  const at = here.gap ? here.gap.end : Math.min(t, p.seconds);
+  const cut = r3(here.c);
+  const gaps = [...(p.gaps ?? [])];
+  const same = gaps.findIndex(g => Math.abs(g.cut - cut) < 0.01);
+  if (same >= 0) gaps[same] = { ...gaps[same], dur: r3(gaps[same].dur + dur) }; else gaps.push({ cut, dur: r3(dur) });
+  const sh = (x: number) => (x >= at - 1e-6 ? r3(x + dur) : x);
+  const clips = p.clips.map(c => (c.start >= at - 1e-6 ? { ...c, start: r3(c.start + dur), end: r3(c.end + dur) }
+    : c.end > at + 1e-6 || c.track === "voice" || c.track === "captions" || (["camera", "slides", "music"].includes(c.track) && c.end >= p.seconds - 1e-6)
+      ? { ...c, end: r3(c.end + dur) } : c) as Clip);
+  return { ...p, seconds: r3(p.seconds + dur), gaps, clips, markers: p.markers?.map(sh) };
+}
+
+/** Take out pause i (as listed in p.gaps): what came after moves back. */
+export function removeGap(p: Production, i: number): Production {
+  const span = gapSpans(p).find(x => x.i === i);
+  if (!span) return p;
+  const { start: gs, end: ge, dur } = span;
+  const m = (x: number) => (x <= gs ? x : x >= ge ? r3(x - dur) : gs);
+  const clips = p.clips.map(c => ({ ...c, start: m(c.start), end: m(c.end) }) as Clip).filter(c => c.end - c.start > 0.05);
+  return { ...p, seconds: r3(p.seconds - dur), gaps: (p.gaps ?? []).filter((_, k) => k !== i), clips, markers: p.markers?.map(m) };
+}
+
+/** Change pause i's length. */
+export function setGapDur(p: Production, i: number, dur: number): Production {
+  const span = gapSpans(p).find(x => x.i === i);
+  if (!span) return p;
+  const q = removeGap(p, i);
+  return dur > 0.05 ? insertGap(q, span.start, dur) : q;
 }
 
 export const cutKey = (segs: Segment[]) => segs.map(s => `${s.sentence}:${s.take}:${s.start}-${s.end}`).join("|");
@@ -168,7 +238,14 @@ export function refit(old: Production, fresh: Production): Production {
     if (c.track === "captions" && cap) return [{ ...c, style: cap.style }];
     return [c];
   });
-  return { ...fresh, brand: old.brand, short: undefined, clips: [...titles, ...clips, ...music].sort((a, b) => a.start - b.start) };
+  let out: Production = { ...fresh, brand: old.brand, short: undefined, clips: [...titles, ...clips, ...music].sort((a, b) => a.start - b.start) };
+  // A pause at the end (room after the last word) is kept; pauses inside the old cut are not (the sentences moved).
+  const tail = (old.gaps ?? []).find(g => g.cut >= cutLength(old) - 0.05);
+  if (tail) {
+    out = insertGap(out, out.seconds, tail.dur);
+    out = { ...out, clips: out.clips.map(c => (c.track === "titles" && c.kind === "outro" ? { ...c, start: r3(Math.max(0, out.seconds - (c.end - c.start))), end: out.seconds } : c)) };
+  }
+  return out;
 }
 
 export const clipsOn = <T extends TrackId>(p: Production, track: T) =>
@@ -384,7 +461,7 @@ export function proChecks(p: Production, script: Script, segs: Segment[], frameF
 
 /** YouTube description: title, then chapter timestamps (YouTube wants the first at 0:00 and 3+ chapters). */
 export function description(p: Production, segs: Segment[], script: Script): string {
-  const ch = chapters(segs, script);
+  const ch = chapters(segs, script).map(c => ({ ...c, start: tlOf(p, c.start) }));
   const stamp = (s: number) => (s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}` : `${Math.floor(s / 60)}`) + `:${String(Math.floor(s % 60)).padStart(2, "0")}`;
   const lines = [p.title, ""];
   if (ch.length >= 3) lines.push(...ch.map(c => `${stamp(c.start)} ${c.name}`));
