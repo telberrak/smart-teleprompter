@@ -200,7 +200,16 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
           </div>
           {cur && <div className="pv-line"><b>{String((sel ?? 0) + 1).padStart(2, "0")}</b> {cur.spoken}</div>}
           <div className="vs-btns">
-            <button className="btn" onClick={() => play(segs)} disabled={!segs.length}>▶ Play the cut</button>
+            {(() => {
+              // From the highlighted sentence (or the next one that is in the cut).
+              const from = sel === null ? 0 : Math.max(0, segs.findIndex(x => x.sentence >= sel + 1));
+              const at = segs.length && from > 0 ? String(segs[from].sentence).padStart(2, "0") : "";
+              return <>
+                <button className="btn" onClick={() => play(segs.slice(from))} disabled={!segs.length}
+                  title="Play the cut from the highlighted sentence">▶ Play the cut{at ? ` from ${at}` : ""}</button>
+                {at && <button className="btn ghost" onClick={() => play(segs)} title="Play the whole cut from the beginning">From the start</button>}
+              </>;
+            })()}
             <button className="btn ghost" onClick={() => { videoRef.current?.pause(); queue.current = null; }}>Pause</button>
           </div>
           <div className="mini-slide"><ScreenCard script={script} view={view} step={step} /></div>
