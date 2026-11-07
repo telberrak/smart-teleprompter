@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseScript } from "./script";
-import { at, bestCorner, buildProduction, chapterName, chapters, clipsOn, description, move, proChecks, snap, split, update } from "./production";
+import { at, bestCorner, refit, buildProduction, chapterName, chapters, clipsOn, description, move, proChecks, snap, split, update } from "./production";
 import type { Segment } from "./edit";
 import type { Frame } from "./excalidraw";
 
@@ -58,5 +58,14 @@ describe("production", () => {
   });
   it("writes a YouTube description with chapters", () => {
     expect(description(p, segs, script)).toBe("What is an API?\n\n0:00 Cold open\n0:10 The waiter\n0:20 Json\n");
+  });
+  it("refit keeps titles, music and settings on a changed cut", () => {
+    const q = update(p, clipsOn(p, "captions")[0].id, { style: "bold" });
+    const shorter = buildProduction(segs.slice(0, 5), script, { hasCamera: true, corner: "br" });
+    const r = refit(q, shorter);
+    expect(r.seconds).toBe(25);
+    expect(clipsOn(r, "titles").map(t => [t.kind, t.start, t.end])).toEqual([["title", 0, 4], ["lower", 4.5, 10], ["chapter", 10, 13], ["chapter", 20, 23], ["outro", 20, 25]]);
+    expect(clipsOn(r, "captions")[0].style).toBe("bold");
+    expect(r.cutKey).toBe(shorter.cutKey);
   });
 });

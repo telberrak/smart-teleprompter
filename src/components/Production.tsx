@@ -4,6 +4,7 @@ import type { SlideView } from "./ScreenCard";
 import { takes as io, mediaUrl, type ProductionResult } from "../lib/bridge";
 import { buildEdit, timeline, type Segment, type TakeInfo } from "../lib/edit";
 import { useReview } from "../lib/reviewState";
+import { refit } from "../lib/production";
 import { cues, toSrt } from "../lib/captions";
 import { loadCorner, CORNERS, type Corner } from "../lib/bubble";
 import { bubblePngs, stepPng } from "../lib/slideImage";
@@ -91,16 +92,34 @@ export function Production({ script, view, scriptPath }: Props) {
     if (!io) { setLoaded(true); return; }
     io.list(scriptPath).then(r => setTakes(r.takes)).catch(e => setError(String(e?.message ?? e))).finally(() => setLoaded(true));
   }, [scriptPath]);
+  // Nothing is built on its own: the cut and the timeline are rebuilt only when you click.
+  const [cutState, setCutState] = useState<"checking" | "fresh" | "stale" | "missing">("checking");
+  const [building, setBuilding] = useState(false);
   useEffect(() => {
     if (!loaded || !segs.length) return;
     const saved = store.get<Prod | null>("tp.prod:" + scriptPath, null);
-    setProdRaw(saved && saved.cutKey === key ? saved : buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand }));
+    setProdRaw(saved ?? buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand }));
     if (!io) return;
-    setProgress(0);
-    io.productionCut(scriptPath, segs).then(setCut).catch(e => setError(String(e?.message ?? e))).finally(() => setProgress(null));
+    setCutState("checking");
+    io.cutStatus(scriptPath, segs).then(st => {
+      setCut(st ? { file: st.file, seconds: st.seconds } : null);
+      setCutState(!st ? "missing" : st.fresh ? "fresh" : "stale");
+    }).catch(() => setCutState("missing"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, key, scriptPath]);
-  useEffect(() => io?.onExportProgress(setProgress), []);
+  const busy = useRef(false);
+  useEffect(() => io?.onExportProgress(x => { if (busy.current) setProgress(x); }), []);
+  const needsRebuild = !!prod && (prod.cutKey !== key || cutState === "stale" || cutState === "missing");
+  const doRebuild = async () => {
+    if (!io || !prod || busy.current) return;
+    busy.current = true; setBuilding(true); setProgress(0); setError("");
+    try {
+      const c = await io.productionCut(scriptPath, segs);
+      setCut(c); setCutState("fresh");
+      if (prod.cutKey !== key) setProd(q => refit(q, buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand: q.brand })));
+    } catch (e) { setError(String((e as Error).message ?? e)); }
+    finally { busy.current = false; setBuilding(false); setProgress(null); }
+  };
 
   // Slide pictures, drawn once per step (the same pictures the export uses).
   useEffect(() => {
@@ -275,7 +294,8 @@ export function Production({ script, view, scriptPath }: Props) {
 
   const doExport = async () => {
     if (!io || !prod) return;
-    setError(""); setResult(null); setShortFile(null); setProgress(0);
+    if (needsRebuild) { setError("Your cut changed in Review: rebuild it (Preview) before exporting."); return; }
+    setError(""); setResult(null); setShortFile(null); setProgress(0); busy.current = true;
     store.set("tp.outs", outs);
     try {
       if (outs.short) await doShort();
@@ -296,7 +316,7 @@ export function Production({ script, view, scriptPath }: Props) {
         thumbnail: { png, at: th.at, corner }, outputs: outs,
       }));
     } catch (e) { setError(String((e as Error).message ?? e)); }
-    finally { setProgress(null); }
+    finally { busy.current = false; setProgress(null); }
   };
 
   if (!io) return <section className="screen on" id="production"><div className="panel"><div className="ph"><h2>Production</h2></div><p className="pd-empty">Production works in the desktop app.</p></div></section>;
@@ -315,7 +335,7 @@ export function Production({ script, view, scriptPath }: Props) {
       <div className="pd-libbody">
         {tab === "media" && <>
           <span className="label">This lesson</span>
-          <div className="pd-item"><i className="sw k-voice" /><span><b>Final cut</b><small>{fmt(total)} · {segs.length} sentences{cut ? "" : " · preparing…"}</small></span></div>
+          <div className="pd-item"><i className="sw k-voice" /><span><b>Final cut</b><small>{fmt(total)} · {segs.length} sentences{needsRebuild ? " · needs a rebuild" : ""}</small></span></div>
           <div className="pd-item"><i className="sw k-slide" /><span><b>Slides</b><small>{clipsOn(prod, "slides").length} steps{view.slides ? ` from ${view.slides.fileName}` : " (ON SCREEN notes)"}</small></span></div>
           <div className="pd-item"><i className="sw k-cam" /><span><b>Camera</b><small>{hasCamera ? "in the cut" : "audio-only takes"}</small></span></div>
           <button className="btn ghost" onClick={rebuild} title="Start again from the cut: your brand kit is kept">Rebuild from the cut</button>
@@ -360,7 +380,13 @@ export function Production({ script, view, scriptPath }: Props) {
           <video ref={videoRef} className={"pd-cam " + (now?.layout ?? "full") + " " + (now?.corner ?? "br")} src={cut ? mediaUrl(cut.file) : undefined}
             playsInline preload="auto" onEnded={() => setPlaying(false)} />
           <canvas ref={overlayRef} className="pd-over" width={1920} height={1080} aria-hidden="true" />
-          {!cut && <div className="pd-wait">Preparing the cut… {progress !== null ? Math.round(progress * 100) + "%" : ""}</div>}
+          {building && <div className="pd-wait">Building the cut… {progress !== null ? Math.round(progress * 100) + "%" : ""}</div>}
+          {!building && needsRebuild && cutState !== "checking" && (
+            <div className="pd-wait pd-stale">
+              <b>{cutState === "missing" ? "The preview needs your cut" : "Your cut changed in Review"}</b>
+              <span>{cutState === "missing" ? "Build it from your takes to play the preview." : "Rebuild to see the new reads. Titles, music and your settings are kept."}{cut ? " Until then the preview shows the previous cut." : ""}</span>
+              <button className="btn primary" onClick={() => void doRebuild()}>{cutState === "missing" ? "Build the cut" : "Rebuild"}</button>
+            </div>)}
         </div>
         {music && <audio ref={musicRef} src={mediaUrl(music.file)} preload="auto" />}
       </div>
@@ -513,7 +539,7 @@ export function Production({ script, view, scriptPath }: Props) {
           <span className="small-note">Your face comes from the camera at that slide; the title is the lesson title.</span>
           <span className="label">YouTube description</span>
           <pre className="pd-desc">{description(prod, segs, script)}</pre>
-          <button className="btn primary pd-go" onClick={() => void doExport()} disabled={progress !== null}>
+          <button className="btn primary pd-go" onClick={() => void doExport()} disabled={progress !== null || building || needsRebuild}>
             {progress !== null ? `Exporting… ${Math.round(progress * 100)}%` : `Export ${Object.values(outs).filter(Boolean).length} file${Object.values(outs).filter(Boolean).length === 1 ? "" : "s"}`}
           </button>
           {progress !== null && <div className="vsetup"><div className="bar"><b style={{ width: `${Math.round(progress * 100)}%` }} /></div></div>}

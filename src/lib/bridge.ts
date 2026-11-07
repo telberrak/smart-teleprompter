@@ -51,6 +51,8 @@ export interface TakesBridge {
   productionCut(scriptPath: string | null, segs: Segment[]): Promise<{ file: string; seconds: number }>;
   pickMusic(): Promise<string | null>;
   exportProduction(scriptPath: string | null, segs: Segment[], opts: ProductionOptions): Promise<ProductionResult>;
+  /** The cut on disk, and whether it matches these segments (never builds). */
+  cutStatus(scriptPath: string | null, segs: Segment[]): Promise<{ file: string; seconds: number; fresh: boolean } | null>;
   /** Files Production has written for this script. */
   productionFiles(scriptPath: string | null): Promise<string[]>;
   /** Send them to the Recycle Bin. */

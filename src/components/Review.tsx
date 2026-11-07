@@ -45,7 +45,9 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
     finally { setLoading(false); }
   }, [scriptPath]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => io?.onExportProgress(setProgress), []);
+  // Progress only for exports started here (Production's jobs report on the same channel).
+  const busy = useRef(false);
+  useEffect(() => io?.onExportProgress(x => { if (busy.current) setProgress(x); }), []);
 
   const edit = useMemo(() => buildEdit(takes, S.length, review.picks, review.hidden), [takes, S.length, review]);
   const lastTake = takes.reduce((a, t) => Math.max(a, t.take), 0);
@@ -113,18 +115,18 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
 
   const doExport = async () => {
     if (!io) return;
-    setError(""); setResult(null); setProgress(0);
+    setError(""); setResult(null); setProgress(0); busy.current = true;
     try { localStorage.setItem("tp.burn", burn ? "1" : "0"); } catch { /* private window */ }
     const srt = toSrt(cues(segs, n => S[n - 1]?.spoken ?? ""));
     try { setResult(await io.exportCut(scriptPath, segs, { srt, burn })); }
     catch (e) { setError(String((e as Error).message ?? e)); }
-    finally { setProgress(null); }
+    finally { busy.current = false; setProgress(null); }
   };
 
   // Whiteboard video: slides full screen at each ON SCREEN step, camera in a round bubble, captions.
   const doWhiteboard = async () => {
     if (!io) return;
-    setError(""); setWb(null); setProgress(0);
+    setError(""); setWb(null); setProgress(0); busy.current = true;
     try { localStorage.setItem("tp.wbcap", wbCaptions ? "1" : "0"); localStorage.setItem("tp.remotion", remotion ? "1" : "0"); } catch { /* private window */ }
     try {
       const name = (st: number) => `step-${String(st).padStart(2, "0")}.png`;
@@ -134,7 +136,7 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
       const { mask, ring } = await bubblePngs(360);
       setWb(await io.exportWhiteboard(scriptPath, segs, { timeline, images, mask, ring, srt: toSrt(timeline.captions), captions: wbCaptions, remotion }));
     } catch (e) { setError(String((e as Error).message ?? e)); }
-    finally { setProgress(null); }
+    finally { busy.current = false; setProgress(null); }
   };
 
   const cur = sel !== null ? S[sel] : null;

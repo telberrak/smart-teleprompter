@@ -140,6 +140,18 @@ const timeOf = line => { const m = /time=(\d+):(\d+):([\d.]+)/.exec(line); retur
 const cutShape = list => JSON.stringify((list || []).map(s => [path.basename(s.file), +(+s.start).toFixed(3), +(+s.end).toFixed(3)]));
 const sameSegs = (a, b) => cutShape(a) === cutShape(b);
 
+/** Is there a cut for these segments already? Never builds anything. */
+function cutStatus(scriptPath, segs) {
+  const dir = takesDir(scriptPath);
+  const base = scriptPath ? path.basename(scriptPath).replace(/\.[^.]+$/, "") : "cut";
+  const out = path.join(dir, `${base}-cut.mp4`), json = out.replace(/\.mp4$/, ".json");
+  try {
+    const prev = JSON.parse(fs.readFileSync(json, "utf8"));
+    if (!fs.existsSync(out)) return null;
+    return { file: out, seconds: prev.seconds, fresh: sameSegs(prev.segments, segs) };
+  } catch { return null; }
+}
+
 /** The cut for these segments: reuse the last export when nothing changed, else make it. */
 async function ensureCut(scriptPath, segs, onProgress, srt) {
   const dir = takesDir(scriptPath);
@@ -287,4 +299,4 @@ function register() {
   });
 }
 
-module.exports = { register, registerScheme, registerProtocol, ffmpeg, listTakes, exportCut, ensureCut, exportWhiteboard, whiteboardGraph, makeSeekable, findSilences };
+module.exports = { register, cutStatus, registerScheme, registerProtocol, ffmpeg, listTakes, exportCut, ensureCut, exportWhiteboard, whiteboardGraph, makeSeekable, findSilences };

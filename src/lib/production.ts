@@ -134,6 +134,31 @@ export function buildProduction(segs: Segment[], script: Script, opts: { hasCame
   return { version: 1, cutKey: cutKey(segs), title: script.title, seconds: total, brand, clips };
 }
 
+/**
+ * After the cut changed in Review: the fresh automatic layout (camera, slides, captions timing),
+ * with your own choices carried over: brand, voice and caption settings, music, and your titles
+ * (kept where they fit; the end card moves to the new end).
+ */
+export function refit(old: Production, fresh: Production): Production {
+  const T = fresh.seconds;
+  const keep = <K extends TrackId>(track: K) => old.clips.filter(c => c.track === track);
+  const voice = keep("voice")[0] as VoiceClip | undefined, cap = keep("captions")[0] as CaptionClip | undefined;
+  const titles = (keep("titles") as TitleClip[]).flatMap(c => {
+    const d = c.end - c.start;
+    if (c.kind === "outro") return [{ ...c, start: r3(Math.max(0, T - d)), end: T }];
+    if (c.start >= T - 0.5) return [];
+    return [{ ...c, end: r3(Math.min(c.end, T)) }];
+  });
+  const music = (keep("music") as MusicClip[]).map(c => ({ ...c, start: 0, end: T }));
+  const clips = fresh.clips.flatMap(c => {
+    if (c.track === "titles" || c.track === "music") return [];
+    if (c.track === "voice" && voice) return [{ ...c, clean: voice.clean, loudness: voice.loudness }];
+    if (c.track === "captions" && cap) return [{ ...c, style: cap.style }];
+    return [c];
+  });
+  return { ...fresh, brand: old.brand, short: undefined, clips: [...titles, ...clips, ...music].sort((a, b) => a.start - b.start) };
+}
+
 export const clipsOn = <T extends TrackId>(p: Production, track: T) =>
   p.clips.filter((c): c is Extract<Clip, { track: T }> => c.track === track).sort((a, b) => a.start - b.start);
 

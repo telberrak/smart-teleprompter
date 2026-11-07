@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("teleprompter", {
     productionCut: (scriptPath, segs) => ipcRenderer.invoke("production:cut", scriptPath, segs),
     pickMusic: () => ipcRenderer.invoke("production:pickMusic"),
     exportProduction: (scriptPath, segs, opts) => ipcRenderer.invoke("production:export", scriptPath, segs, opts),
+    cutStatus: (scriptPath, segs) => ipcRenderer.invoke("production:cutStatus", scriptPath, segs),
     productionFiles: scriptPath => ipcRenderer.invoke("production:files", scriptPath),
     deleteProduction: scriptPath => ipcRenderer.invoke("production:delete", scriptPath),
     exportShort: (scriptPath, segs, opts) => ipcRenderer.invoke("production:short", scriptPath, segs, opts),

@@ -170,6 +170,9 @@ Put your own course files in `samples/` to try them; that folder is not committe
 
 ## Production
 
+Nothing is built on its own: when your choices in Review change, Preview says so and shows
+**Rebuild** (titles, music and settings are kept; the end card moves to the new end).
+
 Production starts from Review's cut (your best take of each sentence, silences removed) and
 lays it out on seven lanes: titles, camera, slides, voice, music, sound effects and captions.
 

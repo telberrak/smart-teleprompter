@@ -297,6 +297,7 @@ function register() {
     const win = BrowserWindow.fromWebContents(e.sender);
     return exportProduction(scriptPath, segs, x => win?.webContents.send("export:progress", x), opts);
   });
+  ipcMain.handle("production:cutStatus", (_e, scriptPath, segs) => media.cutStatus(scriptPath, segs));
   ipcMain.handle("production:files", (_e, scriptPath) => productionFiles(scriptPath));
   ipcMain.handle("production:delete", async (_e, scriptPath) => {
     const files = productionFiles(scriptPath);
