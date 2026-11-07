@@ -26,7 +26,7 @@ export function App() {
   const [file, setFile] = useState<{ path: string | null; name: string }>({ path: null, name: "1.3-whiteboard-script.md (sample)" });
   const [screen, setScreen] = useState<Screen>(() => (SCREENS.find(s => "#" + s === location.hash) ?? SCREENS.find(s => s === lastSession()?.screen) ?? "prepare"));
   // Reopening last time's script: screens wait for it so they don't load the sample first.
-  const [restoring, setRestoring] = useState(() => inElectron && !!lastSession()?.path);
+  const [restoring, setRestoring] = useState(() => inElectron);
   const [startAt, setStartAt] = useState(0);
   const [note, setNote] = useState("");
   const [slides, setSlides] = useState<Slides | null>(null);
@@ -66,9 +66,13 @@ export function App() {
   // On start: the script you were working on, with its slides, on the screen you left.
   useEffect(() => {
     const last = lastSession();
-    if (!inElectron || !last?.path) return;
-    reopenScript(last.path, last.slides)
-      .then(f => { if (f) { show(f); setNote(`Reopened ${f.name}`); } else setNote(`${last.path!.split(/[\\/]/).pop()} was moved or deleted: showing the sample`); })
+    if (!inElectron) return;
+    // The app keeps its own record too, so this works even when the page's memory is empty.
+    reopenScript(last?.path ?? null, last?.slides)
+      .then(f => {
+        if (f) { show(f); setNote(`Reopened ${f.name}`); if (f.path) remember({ path: f.path, slides: f.slides?.path ?? null }); }
+        else if (last?.path) setNote(`${last.path.split(/[\\/]/).pop()} was moved or deleted: showing the sample`);
+      })
       .catch(() => { /* start with the sample */ })
       .finally(() => setRestoring(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -86,7 +90,7 @@ export function App() {
     }
   }, [md, script, file]);
 
-  if (restoring) return <div className="app"><p className="restoring">Opening {lastSession()?.path?.split(/[\\/]/).pop()}…</p></div>;
+  if (restoring) return <div className="app"><p className="restoring">Opening {lastSession()?.path?.split(/[\\/]/).pop() ?? "your last script"}…</p></div>;
 
   return (
     <div className={"app" + (screen === "record" ? " fit" : "")}>
