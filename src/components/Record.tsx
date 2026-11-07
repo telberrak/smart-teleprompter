@@ -4,6 +4,9 @@ import { ScreenCard, type SlideView } from "./ScreenCard";
 import { BREATH } from "../lib/script";
 import { Words } from "./Words";
 import { EditableLine } from "./EditableLine";
+import { voice, inElectron, type VoiceStatus } from "../lib/bridge";
+import { startMic, type Mic } from "../lib/mic";
+import { align, heardWords, norm } from "../lib/align";
 
 interface Props {
   script: Script;
@@ -16,6 +19,8 @@ const EYE_LINE = 140; // px from the top of the prompter: just under the camera
 const WB_EYE_LINE = 64; // whiteboard mode: first line under the slide, one faded line above
 
 type Mode = "prompter" | "whiteboard";
+type Source = "sim" | "mic";
+const loadSource = (): Source => { try { return inElectron && localStorage.getItem("tp.voice") === "mic" ? "mic" : "sim"; } catch { return "sim"; } };
 const loadMode = (): Mode => { try { return localStorage.getItem("tp.mode") === "whiteboard" ? "whiteboard" : "prompter"; } catch { return "prompter"; } };
 
 /**
@@ -65,6 +70,19 @@ export function Record({ script, view, startAt, onEdit }: Props) {
   const [levels, setLevels] = useState<number[]>(Array(16).fill(0));
   const [wpm, setWpm] = useState(0);
   const phase = useRef(0);
+  const [source, setSourceRaw] = useState<Source>(loadSource);
+  const setSource = (v: Source) => { setSourceRaw(v); try { localStorage.setItem("tp.voice", v); } catch { /* private window */ } };
+  const [vs, setVs] = useState<VoiceStatus | null>(null);
+  const [heard, setHeard] = useState("");
+  const mic = source === "mic";
+  const micReady = mic && vs?.phase === "ready";
+  const curRef = useRef(cur); curRef.current = cur;
+  // Every word of the script in order, as the aligner sees it (same numbering as the word offsets).
+  const words = useMemo(() => {
+    const raw: string[] = [];
+    for (const s of S) for (const t of s.tokens) if (t.type === "word") raw.push(t.text.replace(/\*/g, ""));
+    return { raw, norm: raw.map(norm) };
+  }, [S]);
   const promptRef = useRef<HTMLDivElement>(null);
 
   const toast = useCallback((m: string) => setToastMsg(m), []);
@@ -75,7 +93,7 @@ export function Record({ script, view, startAt, onEdit }: Props) {
 
   // Simulated voice: advance one word at a time at a natural pace.
   useEffect(() => {
-    if (!live || editing !== null) return;
+    if (!live || editing !== null || mic) return;
     const next = cur.w + 1;
     if (next >= offsets.total) { setLive(false); toast(`Take ${take} complete · ${S.length} of ${S.length} sentences`); return; }
     const nextS = sentenceOf(next);
@@ -90,19 +108,81 @@ export function Record({ script, view, startAt, onEdit }: Props) {
     const delay = 60000 / pace + (a.breath ? BREATH * 1000 : 0);
     const t = setTimeout(() => setCur({ w: next, s: nextS }), cur.w < 0 ? 300 : delay);
     return () => clearTimeout(t);
-  }, [live, cur, editing, pausesDone]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [live, cur, editing, pausesDone, mic]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Recording clock and meters
   useEffect(() => {
     if (!live) { setLevels(Array(16).fill(0)); setWpm(0); return; }
     const clock = setInterval(() => setRecT(t => t + 1), 1000);
+    if (mic) return () => clearInterval(clock);
     const meter = setInterval(() => {
       const amp = pausing !== null ? 0.05 : 0.45 + Math.random() * 0.5;
       setLevels(Array.from({ length: 16 }, (_, i) => (i / 16 < amp ? 1 : 0)));
       setWpm(pausing !== null ? 0 : Math.round(script.wpm + Math.sin(phase.current) * script.wpm * 0.12));
     }, 140);
     return () => { clearInterval(clock); clearInterval(meter); };
-  }, [live, pausing, script.wpm]);
+  }, [live, pausing, script.wpm, mic]);
+
+  // Voice engine status (desktop app only)
+  useEffect(() => {
+    if (!voice) return;
+    let alive = true;
+    void voice.status().then(st => { if (alive) setVs(st); });
+    const off = voice.onState(setVs);
+    return () => { alive = false; off(); };
+  }, []);
+  // Choosing the microphone loads the model straight away when it is already downloaded.
+  useEffect(() => {
+    if (mic && voice && vs && vs.model && vs.engine && vs.phase === "idle") void voice.setup().then(setVs);
+  }, [mic, vs]);
+
+  // Real voice: listen, transcribe the last 4 s again and again, and move to where you are.
+  useEffect(() => {
+    if (!live || !micReady || editing !== null || !voice) return;
+    const v = voice;
+    let m: Mic | null = null, stopped = false, inflight = false;
+    const hist: { t: number; w: number }[] = [];
+    startMic().then(x => { if (stopped) x.stop(); else m = x; })
+      .catch(err => { toast(`Microphone not available: ${err?.message ?? err}`); setLive(false); });
+    const meter = setInterval(() => {
+      if (!m) return;
+      const amp = m.level();
+      setLevels(Array.from({ length: 16 }, (_, i) => (i / 16 < amp ? 1 : 0)));
+    }, 100);
+    const listen = setInterval(async () => {
+      if (!m || inflight || m.quietFor() > 1.2) return;
+      inflight = true;
+      try {
+        const pos = curRef.current.w;
+        // Tell whisper what is coming: it then spells your words the way the script does.
+        const prompt = words.raw.slice(Math.max(0, pos - 15), pos + 35).join(" ");
+        const res = await v.transcribe(m.last(4), prompt);
+        if (stopped || !res) return;
+        if (res.error) { toast(`Speech engine: ${res.error}`); return; }
+        setHeard(res.text.trim());
+        const hit = align(words.norm, curRef.current.w, heardWords(res.text));
+        if (hit && hit.pos !== curRef.current.w) {
+          setCur({ w: hit.pos, s: sentenceOf(hit.pos) });
+          const now = performance.now();
+          hist.push({ t: now, w: hit.pos });
+          while (hist.length > 2 && now - hist[0].t > 10000) hist.shift();
+          if (hist.length > 1) {
+            const dt = (now - hist[0].t) / 60000, dw = hit.pos - hist[0].w;
+            if (dt > 0.03 && dw > 0) setWpm(Math.round(dw / dt));
+          }
+        }
+      } finally { inflight = false; }
+    }, 350);
+    return () => {
+      stopped = true; clearInterval(meter); clearInterval(listen); m?.stop();
+      setLevels(Array(16).fill(0)); setWpm(0);
+    };
+  }, [live, micReady, editing, words, sentenceOf, toast]);
+
+  const toggleLive = useCallback(() => {
+    if (!live && mic && !micReady) { toast(vs?.model ? "The speech model is still loading…" : "Download the speech model first (Prompter panel)"); return; }
+    setLive(l => !l);
+  }, [live, mic, micReady, vs, toast]);
 
   // Keep the current sentence on the eye line
   useLayoutEffect(() => {
@@ -132,7 +212,7 @@ export function Record({ script, view, startAt, onEdit }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (editing !== null || (e.target as HTMLElement).tagName === "INPUT") return;
-      if (e.code === "Space") { e.preventDefault(); setLive(l => !l); }
+      if (e.code === "Space") { e.preventDefault(); toggleLive(); }
       else if (e.key === "ArrowLeft") back();
       else if (e.key === "e" || e.key === "E") { e.preventDefault(); startEdit(cur.s); }
       else if (e.key === "m" || e.key === "M") setMirror(m => !m);
@@ -140,7 +220,7 @@ export function Record({ script, view, startAt, onEdit }: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editing, back, startEdit, cur.s, wb, setMode]);
+  }, [editing, back, startEdit, cur.s, wb, setMode, toggleLive]);
 
   const step = S.slice(0, cur.s + 1).reduce((a, s) => s.step ?? a, 0);
   const maxStep = Math.max(0, ...S.map(s => s.step ?? 0));
@@ -188,11 +268,11 @@ export function Record({ script, view, startAt, onEdit }: Props) {
             <div className="meter"><span className="label">Pace · {paceLabel} · target {script.wpm}</span><div className="speed"><b style={{ left: (wpm ? pos : 2) + "%" }} /></div></div>
             <div className="meter"><span className="label">Words / min</span><span className="mono big">{wpm || "—"}</span></div>
             <div className="meter"><span className="label">Take</span><span className="mono big">{take}</span></div>
-            <span className="sim">voice simulated</span>
+            <span className="sim" title={heard}>{mic ? (heard ? `heard: “${heard.length > 40 ? "…" + heard.slice(-40) : heard}”` : "listening to your voice") : "voice simulated"}</span>
           </div>
           <div className="ctrls">
             <button className="btn ghost" onClick={back} title="Back one sentence (←)">↶ Back</button>
-            <button className="recbtn" onClick={() => setLive(l => !l)} aria-label="Start or stop recording (Space)"><i /></button>
+            <button className="recbtn" onClick={toggleLive} aria-label="Start or stop recording (Space)"><i /></button>
             <button className="btn ghost" onClick={restart} title="Restart from the top">⟲ Restart</button>
           </div>
         </div>
@@ -212,6 +292,13 @@ export function Record({ script, view, startAt, onEdit }: Props) {
                 <button className={wb ? "on" : ""} aria-pressed={wb} onClick={() => setMode("whiteboard")}>Whiteboard</button>
               </span>
             </div>
+            <div className="row">Voice
+              <span className="seg" role="group" aria-label="What moves the text">
+                <button className={!mic ? "on" : ""} aria-pressed={!mic} onClick={() => setSource("sim")}>Simulated</button>
+                <button className={mic ? "on" : ""} aria-pressed={mic} disabled={!voice} title={voice ? "Follow your real voice (offline, whisper.cpp)" : "Microphone works in the desktop app"} onClick={() => setSource("mic")}>Microphone</button>
+              </span>
+            </div>
+            {mic && vs && <VoiceSetup vs={vs} onSetup={() => voice && void voice.setup().then(setVs)} onPick={() => voice && void voice.pickModel().then(setVs)} />}
             <label className="row" htmlFor="mirror">Mirror for glass <input type="checkbox" className="switch" id="mirror" checked={mirror} onChange={e => setMirror(e.target.checked)} /></label>
             <label className="row" htmlFor="fs">Text size <input type="range" id="fs" min={wb ? 22 : 30} max={wb ? 48 : 64} value={fs} onChange={e => setFs(+e.target.value)} /></label>
             <div className="row">Shortcuts <span><kbd>Space</kbd> <kbd>←</kbd> <kbd>E</kbd> <kbd>M</kbd> <kbd>W</kbd></span></div>
@@ -229,5 +316,23 @@ export function Record({ script, view, startAt, onEdit }: Props) {
         </div>
       </div>
     </section>
+  );
+}
+
+/** First-run setup for the speech model, and its status afterwards. */
+function VoiceSetup({ vs, onSetup, onPick }: { vs: VoiceStatus; onSetup: () => void; onPick: () => void }) {
+  if (!vs.engine) return <div className="vsetup err">{vs.engineError}</div>;
+  if (vs.phase === "ready") return <div className="vsetup ok">● Listening engine ready · {vs.modelName}</div>;
+  if (vs.phase === "downloading" || vs.phase === "loading")
+    return <div className="vsetup"><span>{vs.message}</span><div className="bar"><b style={{ width: `${Math.round(vs.progress * 100)}%` }} /></div></div>;
+  return (
+    <div className="vsetup">
+      {vs.phase === "error" && <span className="err">{vs.message}</span>}
+      {!vs.model && <span>Following your voice needs a speech model (148 MB, downloaded once, then fully offline).</span>}
+      <div className="vs-btns">
+        <button className="btn" onClick={onSetup}>{vs.model ? "Load the speech model" : "Download speech model"}</button>
+        <button className="btn ghost" onClick={onPick} title="Use a ggml-*.bin file you already have">Use a model file…</button>
+      </div>
+    </div>
   );
 }

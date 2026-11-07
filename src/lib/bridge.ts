@@ -4,7 +4,23 @@
 export interface OpenedFile { path: string | null; name: string; content: string }
 export interface OpenedScript extends OpenedFile { slides?: OpenedFile | null }
 
+export interface VoiceStatus {
+  engine: boolean; engineError: string;
+  model: boolean; modelPath: string; modelName: string;
+  phase: "idle" | "downloading" | "loading" | "ready" | "error";
+  progress: number; message: string;
+}
+export interface Heard { text: string; ms: number; error?: string }
+export interface VoiceBridge {
+  status(): Promise<VoiceStatus>;
+  setup(): Promise<VoiceStatus>;
+  pickModel(): Promise<VoiceStatus>;
+  transcribe(pcm: Int16Array, prompt: string): Promise<Heard | null>;
+  onState(cb: (s: VoiceStatus) => void): () => void;
+}
+
 interface Bridge {
+  voice: VoiceBridge;
   openScript(): Promise<OpenedScript | null>;
   openSlides(): Promise<OpenedFile | null>;
   saveScript(path: string, content: string): Promise<boolean>;
@@ -42,3 +58,6 @@ export async function saveScript(path: string | null, content: string): Promise<
   if (path && window.teleprompter) return window.teleprompter.saveScript(path, content);
   return false; // browser mode: kept in memory only
 }
+
+/** whisper.cpp in the desktop app; null in the browser preview. */
+export const voice: VoiceBridge | null = typeof window !== "undefined" ? window.teleprompter?.voice ?? null : null;

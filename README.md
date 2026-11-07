@@ -2,7 +2,7 @@
 
 An offline desktop teleprompter for recording course videos. It follows your voice, records sentence by sentence, cuts silences and bad takes, writes captions from the script, and shows each diagram step as you say it.
 
-This is **milestone 1: the prompter**. The voice is simulated with a steady reading pace; whisper.cpp arrives in milestone 2.
+Milestones 1 and 2 are in: the prompter, and **voice following** with whisper.cpp (offline, on the CPU).
 
 ## Run it (Windows)
 
@@ -39,6 +39,20 @@ Other commands:
 | M | Mirror for teleprompter glass |
 | W | Whiteboard mode: slide in the middle, text scrolling underneath (toggle) |
 
+## Voice following
+
+On the Record screen, set **Voice → Microphone** in the Prompter panel. The first time, click
+**Download speech model**: it fetches `ggml-base.en.bin` (148 MB) from Hugging Face into the app's
+data folder (`%APPDATA%\smart-teleprompter\models`). After that everything runs offline. If you
+already have a whisper.cpp model, use **Use a model file…** instead.
+
+Press Space and start talking. Every ~0.4 s the app transcribes the last 4 seconds and lines the
+words up with the script, so the text follows you; misheard words, ad-libs and pauses are ignored, and
+re-reading an earlier line takes you back there. **Simulated** keeps the old steady-pace demo.
+
+The engine is the prebuilt whisper.cpp addon `@fugood/node-whisper-win32-x64` (installed by
+`npm install`, no compiler needed).
+
 ## Script markup
 
 The parser reads the course scripts as they are written today:
@@ -72,7 +86,7 @@ Put your own course files in `samples/` to try them; that folder is not committe
 ## Roadmap
 
 1. Prompter (this version)
-2. Voice follow: whisper.cpp live, scroll follows you, goes back on repeats
+2. ✅ Voice follow: whisper.cpp live, scroll follows you, goes back on repeats
 3. Recording: camera, mic and screen, with a marker at each sentence
 4. Re-record one sentence, keep the best take, FFmpeg cuts silences
 5. Captions (SRT, VTT) from the script, timed to your voice
