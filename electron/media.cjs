@@ -127,7 +127,6 @@ async function exportCut(scriptPath, segs, onProgress, opts = {}) {
   return { file: out, seconds: total, srt, captioned, captionError };
 }
 
-const BUBBLE = 360, MARGIN = 56;
 const CAPTION_STYLE = "FontName=Arial,FontSize=13,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=2,Shadow=0,MarginV=12"; // smaller and lower than the cut copy: stays under the slide
 const timeOf = line => { const m = /time=(\d+):(\d+):([\d.]+)/.exec(line); return m ? +m[1] * 3600 + +m[2] * 60 + +m[3] : null; };
 const sameSegs = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -149,12 +148,13 @@ async function ensureCut(scriptPath, segs, onProgress, srt) {
 }
 
 /** FFmpeg filter graph: slides full screen, camera full screen in "camera" scenes, round camera bubble over slides. */
-function whiteboardGraph(scenes, { hasCamera, slideInput, maskInput, ringInput, total, srt }) {
+function whiteboardGraph(scenes, { hasCamera, slideInput, maskInput, ringInput, total, srt, bubble = {} }) {
+  const BUBBLE = bubble.size || 360, MARGIN = bubble.margin || 56, corner = bubble.corner || "br";
   const parts = [], labels = [];
   const camScenes = scenes.filter(s => s.kind === "camera");
   const slideScenes = scenes.filter(s => s.kind === "slide");
-  const bubble = hasCamera && slideScenes.length > 0;
-  const camUses = camScenes.length + (bubble ? 1 : 0);
+  const showBubble = hasCamera && slideScenes.length > 0;
+  const camUses = camScenes.length + (showBubble ? 1 : 0);
   let ci = 0;
   if (camUses) parts.push(`[0:v]split=${camUses}${Array.from({ length: camUses }, (_, i) => `[c${i}]`).join("")}`);
   scenes.forEach((s, i) => {
@@ -165,9 +165,9 @@ function whiteboardGraph(scenes, { hasCamera, slideInput, maskInput, ringInput, 
   });
   parts.push(`${labels.join("")}concat=n=${scenes.length}:v=1:a=0[bg]`);
   let last = "bg";
-  if (bubble) {
+  if (showBubble) {
     const on = slideScenes.map(s => `between(t,${s.start.toFixed(3)},${s.end.toFixed(3)})`).join("+");
-    const pos = `x=W-w-${MARGIN}:y=H-h-${MARGIN}`;
+    const pos = `x=${corner[1] === "l" ? MARGIN : `W-w-${MARGIN}`}:y=${corner[0] === "t" ? MARGIN : `H-h-${MARGIN}`}`;
     parts.push(`[c${ci}]crop=ih:ih,scale=${BUBBLE}:${BUBBLE},setsar=1,format=yuva420p[cs]`);
     parts.push(`[${maskInput}:v]scale=${BUBBLE}:${BUBBLE},format=gray[mk]`);
     parts.push(`[cs][mk]alphamerge[bub]`);
@@ -220,7 +220,7 @@ async function exportWhiteboard(scriptPath, segs, onProgress, opts) {
   args.push("-loop", "1", "-framerate", "30", "-t", (total + 0.1).toFixed(3), "-i", rel("bubble-ring.png"));
   const hasCamera = segs.some(s => s.video);
   const srt = opts.captions && cut.srt ? path.basename(cut.srt) : null;
-  const graph = whiteboardGraph(tl.scenes, { hasCamera, slideInput: i => slideIdx[i], maskInput, ringInput, total, srt });
+  const graph = whiteboardGraph(tl.scenes, { hasCamera, slideInput: i => slideIdx[i], maskInput, ringInput, total, srt, bubble: tl.bubble });
   const graphName = ".whiteboard-graph.txt";
   fs.writeFileSync(path.join(dir, graphName), graph);
   const outName = `${base}-whiteboard.mp4`;

@@ -6,6 +6,7 @@
 import type { Segment } from "./edit";
 import type { Script } from "./script";
 import { cues, type Cue } from "./captions";
+import { DEFAULT_CORNER, type Corner } from "./bubble";
 
 export interface Scene {
   /** "camera": full-screen camera. "slide": slide full screen, camera bubble. */
@@ -52,13 +53,15 @@ export interface Timeline {
   seconds: number;
   /** The joined cut (camera + voice), relative to the timeline file. */
   video: string;
+  /** The round camera bubble over slides: which corner, size and distance from the edges, px. */
+  bubble: { corner: Corner; size: number; margin: number };
   scenes: (Scene & { image?: string })[];
   captions: Cue[];
   /** The sentences of the cut, in cut time, for editors that want to restyle them. */
   sentences: { sentence: number; take: number; start: number; end: number; text: string }[];
 }
 
-export function buildTimeline(segs: Segment[], script: Script, opts: { hasCamera: boolean; video: string; image: (step: number) => string }): Timeline {
+export function buildTimeline(segs: Segment[], script: Script, opts: { hasCamera: boolean; video: string; image: (step: number) => string; corner?: Corner }): Timeline {
   const sc = scenes(segs, script, opts.hasCamera);
   let t = 0;
   const sentences = segs.map(s => {
@@ -69,6 +72,7 @@ export function buildTimeline(segs: Segment[], script: Script, opts: { hasCamera
   });
   return {
     version: 1, title: script.title, fps: 30, width: 1920, height: 1080, seconds: +t.toFixed(3), video: opts.video,
+    bubble: { corner: opts.corner ?? DEFAULT_CORNER, size: 360, margin: 56 },
     scenes: sc.map(x => (x.kind === "slide" ? { ...x, image: opts.image(x.step) } : x)),
     captions: cues(segs, n => script.sentences[n - 1]?.spoken ?? "").map(c => ({ ...c, start: +c.start.toFixed(3), end: +c.end.toFixed(3) })),
     sentences,

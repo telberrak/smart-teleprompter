@@ -36,3 +36,13 @@ describe("storyboard", () => {
     expect(tl.captions.map(c => c.text)).toEqual(["Hello there.", "Here is an arrow."]);
   });
 });
+
+import { bubbleXY } from "./bubble";
+describe("bubble corners", () => {
+  it("places the bubble in each corner", () => {
+    expect(bubbleXY("tl", 1920, 1080, 360, 56)).toEqual({ x: 56, y: 56 });
+    expect(bubbleXY("tr", 1920, 1080, 360, 56)).toEqual({ x: 1504, y: 56 });
+    expect(bubbleXY("bl", 1920, 1080, 360, 56)).toEqual({ x: 56, y: 664 });
+    expect(bubbleXY("br", 1920, 1080, 360, 56)).toEqual({ x: 1504, y: 664 });
+  });
+});

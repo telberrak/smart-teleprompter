@@ -100,7 +100,10 @@ Tick **Also make a copy with captions burnt in** for `<script>-cut-captioned.mp4
 
 - Before the first `[ON SCREEN]` note (the cold open) your camera fills the screen.
 - From then on, the slide for the current step fills the screen and your camera sits in a round
-  bubble in the bottom-right corner. Slides change at the sentence after each note.
+  bubble in the corner you pick under **Camera bubble** (top left, top right, bottom left, bottom
+  right; default bottom right). Slides change at the sentence after each note.
+  The same setting is on the Record screen: in Whiteboard mode the bubble shows over the slide there
+  too, so you can check it does not hide anything.
 - Captions are burnt in under the slide (untick **Captions on the whiteboard video** to leave them out).
 
 Slides are drawn from your `.excalidraw` frames at 1920x1080 (`<script>-slides/step-NN.png`);

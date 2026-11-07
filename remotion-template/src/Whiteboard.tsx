@@ -5,12 +5,14 @@ export interface Cue { start: number; end: number; text: string }
 export interface Timeline {
   version: 1; title: string; fps: number; width: number; height: number; seconds: number;
   video: string; scenes: Scene[]; captions: Cue[];
+  /** Set in the app (Review > Camera bubble). Missing in older timelines: bottom right. */
+  bubble?: { corner: "tl" | "tr" | "bl" | "br"; size: number; margin: number };
   sentences: { sentence: number; take: number; start: number; end: number; text: string }[];
 }
 
-// Look of the video. Change these freely.
-const BUBBLE = 360;        // camera bubble size, px
-const MARGIN = 56;         // bubble distance from the corner, px
+// Look of the video. Change these freely. The bubble's corner, size and margin come from
+// timeline.json (chosen in the app); set CORNER here to override it.
+const CORNER: "tl" | "tr" | "bl" | "br" | null = null;
 const MOVE = 0.4;          // seconds for the camera to shrink into / grow out of the bubble
 const SLIDE_FADE = 0.25;   // seconds for a slide to fade in
 const SHOW_CAPTIONS = true;
@@ -35,12 +37,16 @@ export const Whiteboard = ({ timeline }: { timeline: Timeline | null }) => {
   if (!timeline) return <AbsoluteFill style={{ background: "#fff" }} />;
   const t = frame / fps;
   const k = bubbleAmount(timeline.scenes, t);
+  const BUBBLE = timeline.bubble?.size ?? 360, MARGIN = timeline.bubble?.margin ?? 56;
+  const corner = CORNER ?? timeline.bubble?.corner ?? "br";
+  const bx = corner[1] === "l" ? MARGIN : width - BUBBLE - MARGIN;
+  const by = corner[0] === "t" ? MARGIN : height - BUBBLE - MARGIN;
 
-  // Camera: full frame (k = 0) to a circle in the bottom-right corner (k = 1).
+  // Camera: full frame (k = 0) to a circle in the chosen corner (k = 1).
   const size = interpolate(k, [0, 1], [width, BUBBLE]);
   const h = interpolate(k, [0, 1], [height, BUBBLE]);
-  const left = interpolate(k, [0, 1], [0, width - BUBBLE - MARGIN]);
-  const top = interpolate(k, [0, 1], [0, height - BUBBLE - MARGIN]);
+  const left = interpolate(k, [0, 1], [0, bx]);
+  const top = interpolate(k, [0, 1], [0, by]);
   const radius = interpolate(k, [0, 1], [0, BUBBLE / 2]);
   const cue = SHOW_CAPTIONS ? timeline.captions.find(c => t >= c.start && t < c.end) : undefined;
 

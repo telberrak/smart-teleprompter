@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Script } from "../lib/script";
 import { ScreenCard, type SlideView } from "./ScreenCard";
+import { CORNERS, isCorner, loadCorner, saveCorner, type Corner } from "../lib/bubble";
 import { BREATH } from "../lib/script";
 import { Words } from "./Words";
 import { EditableLine } from "./EditableLine";
@@ -87,6 +88,9 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
   const takeRef = useRef<Take | null>(null);
   const marksRef = useRef<Mark[]>([]);
   const camVideo = useRef<HTMLVideoElement>(null);
+  // Corner of the round camera bubble over the slide (whiteboard mode, and the whiteboard video).
+  const [corner, setCornerRaw] = useState<Corner>(loadCorner);
+  const setCorner = (c: Corner) => { setCornerRaw(c); saveCorner(c); };
   const [micId, setMicIdRaw] = useState(() => { try { return localStorage.getItem("tp.mic") ?? ""; } catch { return ""; } });
   const setMicId = (id: string) => { setMicIdRaw(id); try { localStorage.setItem("tp.mic", id); } catch { /* private window */ } };
   const mic = source === "mic";
@@ -327,7 +331,9 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
       <div className={"stage" + (live ? " live" : "") + (mirror ? " mirrored" : "") + (wb ? " wb" : "")}>
         <div className="notch" aria-hidden="true"><span className="lens" /></div>
         {wb
-          ? <div className="wb-slide"><div className="slide"><ScreenCard script={script} view={view} step={step} ghost /></div><span className="wb-step">step {step} / {maxStep}</span></div>
+          ? <div className="wb-slide"><div className="slide"><ScreenCard script={script} view={view} step={step} ghost />
+              {camStream && step > 0 && <div className={"wb-bubble " + corner} title="Your camera, where it will sit in the whiteboard video">
+                <video autoPlay muted playsInline ref={el => { if (el && el.srcObject !== camStream) el.srcObject = camStream; }} /></div>}</div><span className="wb-step">step {step} / {maxStep}</span></div>
           : <div className="eyeline" aria-hidden="true" />}
         <div className={"toast" + (toastMsg ? " show" : "")} role="status"><span className="dot" /><span>{toastMsg}</span></div>
         {editing !== null && <div className="edit-hint">Editing sentence {editing + 1} · <kbd>Enter</kbd> save · <kbd>Esc</kbd> cancel · use **word** for stress and / for a breath</div>}
@@ -413,6 +419,11 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
                   <option value="">System default</option>
                   {cams.filter(d => d.deviceId).map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || "Camera"}</option>)}
                   <option value="off">No camera (audio only)</option>
+                </select>
+              </label>
+              <label className="row" htmlFor="camcorner">Camera bubble
+                <select id="camcorner" className="micsel" value={corner} onChange={e => isCorner(e.target.value) && setCorner(e.target.value)}>
+                  {CORNERS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                 </select>
               </label>
               <div className="row small">Each press of Space records a new take {scriptPath ? "into takes/ next to the script" : "into Videos/Smart Teleprompter (open a script to save next to it)"}.</div>

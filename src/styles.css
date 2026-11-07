@@ -311,3 +311,8 @@ html:has(.app.fit),body:has(.app.fit){overflow:hidden}
 .pv-line b{font-family:var(--f-mono);font-size:11px;color:var(--tungsten);margin-right:6px}
 .mini-slide{width:46%;aspect-ratio:16/9;border-radius:8px;overflow:hidden;align-self:flex-start}
 .small-note{font-size:11px;color:var(--ink-3);word-break:break-all}
+/* Round camera bubble over the slide in whiteboard mode, in the chosen corner (sizes as in the video: 360/1920 wide, 56 px margin) */
+.wb-slide .slide{position:relative}
+.wb-bubble{position:absolute;width:18.75%;aspect-ratio:1;border-radius:50%;overflow:hidden;box-shadow:0 0 0 3px #fff,0 4px 14px rgba(0,0,0,.35);z-index:3;pointer-events:none}
+.wb-bubble.tl{left:2.9%;top:5.2%}.wb-bubble.tr{right:2.9%;top:5.2%}.wb-bubble.bl{left:2.9%;bottom:5.2%}.wb-bubble.br{right:2.9%;bottom:5.2%}
+.wb-bubble video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}

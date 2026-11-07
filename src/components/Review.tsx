@@ -4,6 +4,7 @@ import { ScreenCard, type SlideView } from "./ScreenCard";
 import { takes as io, mediaUrl, type ExportResult, type WhiteboardResult } from "../lib/bridge";
 import { buildTimeline, slideSteps } from "../lib/storyboard";
 import { bubblePngs, stepPng } from "../lib/slideImage";
+import { CORNERS, isCorner, loadCorner, saveCorner, type Corner } from "../lib/bubble";
 import { cues, toSrt } from "../lib/captions";
 import { buildEdit, timeline, totalSeconds, type Segment, type TakeInfo } from "../lib/edit";
 
@@ -32,6 +33,8 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
   const flag = (k: string, dflt: boolean) => { try { const v = localStorage.getItem(k); return v === null ? dflt : v === "1"; } catch { return dflt; } };
   const [wbCaptions, setWbCaptions] = useState(() => flag("tp.wbcap", true));
   const [remotion, setRemotion] = useState(() => flag("tp.remotion", true));
+  const [corner, setCornerRaw] = useState<Corner>(loadCorner);
+  const setCorner = (c: Corner) => { setCornerRaw(c); saveCorner(c); };
   const videoRef = useRef<HTMLVideoElement>(null);
   const queue = useRef<{ segs: Segment[]; i: number } | null>(null);
 
@@ -91,7 +94,7 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
     try { localStorage.setItem("tp.wbcap", wbCaptions ? "1" : "0"); localStorage.setItem("tp.remotion", remotion ? "1" : "0"); } catch { /* private window */ }
     try {
       const name = (st: number) => `step-${String(st).padStart(2, "0")}.png`;
-      const timeline = buildTimeline(segs, script, { hasCamera: segs.some(s => s.video), video: "", image: name });
+      const timeline = buildTimeline(segs, script, { hasCamera: segs.some(s => s.video), video: "", image: name, corner });
       const images: Record<string, Uint8Array> = {};
       for (const st of slideSteps(timeline.scenes)) images[name(st)] = await stepPng(script, view, st);
       const { mask, ring } = await bubblePngs(360);
@@ -162,10 +165,15 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
           {result?.captionError && <div className="vsetup err">Burning in captions failed: {result.captionError}</div>}
           {result && <div className="out"><span className="ext">MP4</span><span className="f" title={result.file}>{result.file.split(/[\\/]/).pop()} · {fmt(result.seconds)}</span><button className="linkbtn" onClick={() => void io?.reveal(result.file)}>Show file</button></div>}
           <span className="label">Whiteboard video</span>
-          <span className="small-note">Slides full screen at each ON SCREEN note, your camera in a round bubble; the cold open stays on camera.</span>
+          <span className="small-note">Slides full screen at each ON SCREEN note, your camera in a round bubble in the corner you choose; the cold open stays on camera.</span>
           <button className="btn primary" onClick={() => void doWhiteboard()} disabled={!segs.length || progress !== null}>
             {progress !== null ? `Exporting… ${Math.round(progress * 100)}%` : "Make whiteboard video"}
           </button>
+          <label className="row" htmlFor="wbcorner">Camera bubble
+            <select id="wbcorner" className="micsel" value={corner} onChange={e => isCorner(e.target.value) && setCorner(e.target.value)}>
+              {CORNERS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+          </label>
           <label className="row" htmlFor="wbcap">Captions on the whiteboard video <input type="checkbox" className="switch" id="wbcap" checked={wbCaptions} onChange={e => setWbCaptions(e.target.checked)} /></label>
           <label className="row" htmlFor="remotion">Also write a Remotion project <input type="checkbox" className="switch" id="remotion" checked={remotion} onChange={e => setRemotion(e.target.checked)} /></label>
           {wb && <div className="out"><span className="ext">MP4</span><span className="f" title={wb.file}>{wb.file.split(/[\\/]/).pop()} · {fmt(wb.seconds)}</span><button className="linkbtn" onClick={() => void io?.reveal(wb.file)}>Show file</button></div>}
