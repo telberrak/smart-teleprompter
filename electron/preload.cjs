@@ -9,6 +9,13 @@ contextBridge.exposeInMainWorld("teleprompter", {
     chunk: (id, data) => ipcRenderer.invoke("take:chunk", id, data),
     end: (id, meta) => ipcRenderer.invoke("take:end", id, meta),
     reveal: file => ipcRenderer.invoke("take:reveal", file),
+    list: scriptPath => ipcRenderer.invoke("takes:list", scriptPath),
+    exportCut: (scriptPath, segs) => ipcRenderer.invoke("export:run", scriptPath, segs),
+    onExportProgress: cb => {
+      const h = (_e, p) => cb(p);
+      ipcRenderer.on("export:progress", h);
+      return () => ipcRenderer.removeListener("export:progress", h);
+    },
   },
   voice: {
     status: () => ipcRenderer.invoke("voice:status"),

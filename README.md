@@ -2,7 +2,7 @@
 
 An offline desktop teleprompter for recording course videos. It follows your voice, records sentence by sentence, cuts silences and bad takes, writes captions from the script, and shows each diagram step as you say it.
 
-Milestones 1–3 are in: recording, the prompter, and **voice following** with whisper.cpp (offline, on the CPU).
+Milestones 1–4 are in: review/redo/export, recording, the prompter, and **voice following** with whisper.cpp (offline, on the CPU).
 
 ## Run it (Windows)
 
@@ -64,6 +64,17 @@ Takes go to `takes/<script name>/` next to the script, e.g.
 
 The audio is recorded raw (no noise suppression or auto gain) from the microphone chosen under
 Voice. With voice following, sentence times trail your voice by `follow.lagSeconds`.
+
+## Review, redo and export
+
+**Review** lists every sentence with each read found in your takes (T1, T2·2 = take 2, second
+read…). The **last read wins** (★), so fluff, say it again, carry on. Click another read to use it
+instead (and to play it). **Redo** jumps to Record at that sentence; the new take replaces it.
+
+Cut points come from the sentence times in each take, shifted back by the voice-following lag
+and snapped to the nearest silence (FFmpeg `silencedetect`, −35 dB, 0.2 s). **Export MP4** writes
+`takes/<script>/<script>-cut.mp4` (1080p30 H.264 + AAC) plus a `-cut.json` with every segment.
+FFmpeg is bundled through npm (`@ffmpeg-installer/ffmpeg`), nothing to install.
 
 ## Script markup
 

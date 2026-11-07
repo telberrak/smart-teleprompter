@@ -4,6 +4,8 @@ const path = require("node:path");
 const fs = require("node:fs/promises");
 const voice = require("./voice.cjs");
 const takes = require("./takes.cjs");
+const media = require("./media.cjs");
+media.registerScheme();
 
 const isDev = process.argv.includes("--dev");
 
@@ -69,8 +71,10 @@ ipcMain.handle("script:save", async (_e, file, content) => {
 
 voice.register();
 takes.register();
+media.register();
 
 app.whenReady().then(() => {
+  media.registerProtocol();
   createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });

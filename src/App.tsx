@@ -76,7 +76,7 @@ export function App() {
       </header>
       {screen === "prepare" && <Prepare script={script} view={view} fileName={file.name} saved={!!file.path} onOpen={open} onOpenSlides={pickSlides} onEdit={edit} onRecord={() => { setStartAt(0); setScreen("record"); }} />}
       {screen === "record" && <Record script={script} view={view} startAt={startAt} onEdit={edit} scriptPath={file.path} />}
-      {screen === "review" && <Review script={script} view={view} onRedo={i => { setStartAt(Math.max(0, i - 2)); setScreen("record"); }} />}
+      {screen === "review" && <Review script={script} view={view} scriptPath={file.path} onRedo={i => { setStartAt(i); setScreen("record"); }} />}
       <div className={"gtoast" + (note ? " show" : "")} role="status">{note}</div>
     </div>
   );

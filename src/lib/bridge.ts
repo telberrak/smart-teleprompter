@@ -1,3 +1,4 @@
+import type { Segment, TakeInfo } from "./edit";
 // Access to the Electron main process (see electron/preload.cjs).
 // In a plain browser (npm run web) these fall back to file pickers and in-memory saving.
 
@@ -26,7 +27,13 @@ export interface TakesBridge {
   chunk(id: number, data: ArrayBuffer): Promise<boolean>;
   end(id: number, meta: unknown): Promise<{ file: string; json: string; bytes: number } | null>;
   reveal(file: string): Promise<void>;
+  list(scriptPath: string | null): Promise<{ dir: string; takes: (TakeInfo & { error?: string })[] }>;
+  exportCut(scriptPath: string | null, segs: Segment[]): Promise<{ file: string; seconds: number }>;
+  onExportProgress(cb: (p: number) => void): () => void;
 }
+
+/** A file on disk as a URL the page can play (served by the take:// protocol). */
+export const mediaUrl = (file: string) => "take://media/" + encodeURIComponent(file);
 
 interface Bridge {
   takes: TakesBridge;
