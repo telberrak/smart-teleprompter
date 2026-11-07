@@ -418,3 +418,5 @@ button.pd-item:hover{border-color:var(--tungsten)}
 .btn.danger{color:#ffb4b4;border-color:rgba(255,107,107,.45)}
 .linkbtn.danger{color:#ff9d9d}
 .rv-takes{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
+.pd-ruler{touch-action:none;user-select:none;cursor:ew-resize}
+.pd-head-grip{position:absolute;top:0;width:14px;height:14px;margin-left:-6px;background:var(--tally);clip-path:polygon(0 0,100% 0,100% 55%,50% 100%,0 55%);pointer-events:none;z-index:2}

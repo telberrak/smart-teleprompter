@@ -136,7 +136,9 @@ async function exportCut(scriptPath, segs, onProgress, opts = {}) {
 
 const CAPTION_STYLE = "FontName=Arial,FontSize=13,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=2,Shadow=0,MarginV=12"; // smaller and lower than the cut copy: stays under the slide
 const timeOf = line => { const m = /time=(\d+):(\d+):([\d.]+)/.exec(line); return m ? +m[1] * 3600 + +m[2] * 60 + +m[3] : null; };
-const sameSegs = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// Same pieces of the same files, in the same order (other fields, like a read's id, do not change the video).
+const cutShape = list => JSON.stringify((list || []).map(s => [path.basename(s.file), +(+s.start).toFixed(3), +(+s.end).toFixed(3)]));
+const sameSegs = (a, b) => cutShape(a) === cutShape(b);
 
 /** The cut for these segments: reuse the last export when nothing changed, else make it. */
 async function ensureCut(scriptPath, segs, onProgress, srt) {

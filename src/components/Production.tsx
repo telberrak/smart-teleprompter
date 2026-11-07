@@ -201,6 +201,13 @@ export function Production({ script, view, scriptPath }: Props) {
     if (d.moved) setProd(q => move(q, d.id, magnet ? snap(d.s0 + dx, points) : d.s0 + dx));
   };
   const onClipUp = () => { drag.current = null; };
+  // Playhead: click or drag on the ruler (it follows the pointer, like CapCut).
+  const scrubbing = useRef(false);
+  const scrubTo = (e: RPointerEvent<HTMLDivElement>) => {
+    if (playing) togglePlay();
+    const r = e.currentTarget.getBoundingClientRect();
+    seek((e.clientX - r.left) / zoom);
+  };
   const laneClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return;
     const r = e.currentTarget.getBoundingClientRect();
@@ -436,7 +443,11 @@ export function Production({ script, view, scriptPath }: Props) {
         </div>
         <div className="pd-lanes" ref={lanesRef}>
           <div className="pd-inner" style={{ width }}>
-            <div className="pd-ruler" onClick={e => { const r = e.currentTarget.getBoundingClientRect(); seek((e.clientX - r.left) / zoom); }}>
+            <div className="pd-ruler" title="Click or drag to move the playhead"
+              onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); scrubbing.current = true; scrubTo(e); }}
+              onPointerMove={e => { if (scrubbing.current) scrubTo(e); }}
+              onPointerUp={() => { scrubbing.current = false; }}>
+              <span className="pd-head-grip" style={{ left: t * zoom }} aria-hidden="true" />
               {Array.from({ length: Math.floor(total / (zoom < 6 ? 60 : zoom < 20 ? 15 : 5)) + 1 }, (_, i) => i * (zoom < 6 ? 60 : zoom < 20 ? 15 : 5)).map(s => <span key={s} className="tick" style={{ left: s * zoom }}>{fmt(s)}</span>)}
               {chs.map(c => <span key={c.start} className="chap" style={{ left: c.start * zoom }}>◆ {c.name}</span>)}
             </div>
