@@ -88,7 +88,9 @@ async function load() {
   if (ctx && ctxPath === p) return;
   if (ctx) { try { await ctx.release(); } catch { /* already gone */ } ctx = null; }
   set("loading", 0, "Loading the speech model…");
-  log("loading", p, fs.existsSync(p) ? fs.statSync(p).size : "missing", e.pkg);
+  log("loading", p, fs.existsSync(p) ? fs.statSync(p).size : "missing", e.pkg, require(`${e.pkg}/package.json`).version);
+  // whisper.cpp's own warnings and errors go to voice.log too.
+  try { e.mod.WhisperContext.toggleNativeLog(true, (level, text) => { if (level !== "info" && level !== "debug") log("whisper", level, String(text).trim()); }); } catch { /* older addon */ }
   ctx = await new e.mod.WhisperContext({ filePath: p, useGpu: false });
   ctxPath = p;
   set("ready", 1, "");
