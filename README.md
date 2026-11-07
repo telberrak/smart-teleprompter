@@ -2,7 +2,7 @@
 
 An offline desktop teleprompter for recording course videos. It follows your voice, records sentence by sentence, cuts silences and bad takes, writes captions from the script, and shows each diagram step as you say it.
 
-Milestones 1 and 2 are in: the prompter, and **voice following** with whisper.cpp (offline, on the CPU).
+Milestones 1–3 are in: recording, the prompter, and **voice following** with whisper.cpp (offline, on the CPU).
 
 ## Run it (Windows)
 
@@ -52,6 +52,18 @@ re-reading an earlier line takes you back there. **Simulated** keeps the old ste
 
 The engine is the prebuilt whisper.cpp addon `@fugood/node-whisper-win32-x64` (installed by
 `npm install`, no compiler needed).
+
+## Recording
+
+The camera preview shows in the bottom-left of the Record screen; pick the camera (or audio only)
+in the **Recording** panel. Every press of Space starts a new take and the next press stops it.
+Takes go to `takes/<script name>/` next to the script, e.g.
+
+    samples/1.1/takes/1.1-whiteboard-script/take-01.webm
+    samples/1.1/takes/1.1-whiteboard-script/take-01.json   <- start/end second of every sentence
+
+The audio is recorded raw (no noise suppression or auto gain) from the microphone chosen under
+Voice. With voice following, sentence times trail your voice by `follow.lagSeconds`.
 
 ## Script markup
 

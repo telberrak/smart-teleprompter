@@ -285,3 +285,8 @@ input[type=range]{accent-color:var(--tungsten);width:120px}
 .vs-btns{display:flex;gap:8px;flex-wrap:wrap}
 .seg button:disabled{opacity:.4;cursor:not-allowed}
 .micsel{max-width:60%;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:4px 6px;font-size:12px}
+.cam video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+.cam .rec{z-index:1}
+.cam .rec.on{background:rgba(220,40,40,.85)}
+.rec-on{color:var(--tally)!important;font-weight:600}
+.row.small{font-size:11.5px;color:var(--ink-3);display:block}

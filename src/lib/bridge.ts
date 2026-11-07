@@ -21,7 +21,15 @@ export interface VoiceBridge {
   onState(cb: (s: VoiceStatus) => void): () => void;
 }
 
+export interface TakesBridge {
+  begin(scriptPath: string | null): Promise<{ id: number; file: string; take: number }>;
+  chunk(id: number, data: ArrayBuffer): Promise<boolean>;
+  end(id: number, meta: unknown): Promise<{ file: string; json: string; bytes: number } | null>;
+  reveal(file: string): Promise<void>;
+}
+
 interface Bridge {
+  takes: TakesBridge;
   voice: VoiceBridge;
   openScript(): Promise<OpenedScript | null>;
   openSlides(): Promise<OpenedFile | null>;
@@ -63,3 +71,6 @@ export async function saveScript(path: string | null, content: string): Promise<
 
 /** whisper.cpp in the desktop app; null in the browser preview. */
 export const voice: VoiceBridge | null = typeof window !== "undefined" ? window.teleprompter?.voice ?? null : null;
+
+/** Saving takes to disk in the desktop app; null in the browser preview. */
+export const takes: TakesBridge | null = typeof window !== "undefined" ? window.teleprompter?.takes ?? null : null;

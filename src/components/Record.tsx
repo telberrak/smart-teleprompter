@@ -4,7 +4,8 @@ import { ScreenCard, type SlideView } from "./ScreenCard";
 import { BREATH } from "../lib/script";
 import { Words } from "./Words";
 import { EditableLine } from "./EditableLine";
-import { voice, inElectron, type VoiceStatus } from "../lib/bridge";
+import { voice, takes, inElectron, type VoiceStatus } from "../lib/bridge";
+import { openCamera, startTake, type Mark, type Take } from "../lib/recorder";
 import { startMic, type Mic } from "../lib/mic";
 import { align, heardWords, norm } from "../lib/align";
 
@@ -13,6 +14,8 @@ interface Props {
   view: SlideView;
   startAt: number;
   onEdit: (index: number, source: string) => void;
+  /** Where the script lives: takes are saved next to it. */
+  scriptPath: string | null;
 }
 
 const EYE_LINE = 140; // px from the top of the prompter: just under the camera
@@ -27,7 +30,7 @@ const loadMode = (): Mode => { try { return localStorage.getItem("tp.mode") === 
  * Full-screen prompter. Milestone 1 simulates the voice with a steady reading pace;
  * milestone 2 replaces the timer with whisper.cpp + the live aligner.
  */
-export function Record({ script, view, startAt, onEdit }: Props) {
+export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
   const S = script.sentences;
   const offsets = useMemo(() => {
     const o: number[] = []; let n = 0;
@@ -75,6 +78,15 @@ export function Record({ script, view, startAt, onEdit }: Props) {
   const [vs, setVs] = useState<VoiceStatus | null>(null);
   const [heard, setHeard] = useState("");
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
+  const [cams, setCams] = useState<MediaDeviceInfo[]>([]);
+  const [camId, setCamIdRaw] = useState(() => { try { return localStorage.getItem("tp.cam") ?? ""; } catch { return ""; } });
+  const setCamId = (id: string) => { setCamIdRaw(id); try { localStorage.setItem("tp.cam", id); } catch { /* private window */ } };
+  const [camStream, setCamStream] = useState<MediaStream | null>(null);
+  const [lastTake, setLastTake] = useState<{ file: string; take: number } | null>(null);
+  const [recording, setRecording] = useState(false);
+  const takeRef = useRef<Take | null>(null);
+  const marksRef = useRef<Mark[]>([]);
+  const camVideo = useRef<HTMLVideoElement>(null);
   const [micId, setMicIdRaw] = useState(() => { try { return localStorage.getItem("tp.mic") ?? ""; } catch { return ""; } });
   const setMicId = (id: string) => { setMicIdRaw(id); try { localStorage.setItem("tp.mic", id); } catch { /* private window */ } };
   const mic = source === "mic";
@@ -137,11 +149,11 @@ export function Record({ script, view, startAt, onEdit }: Props) {
   // The list of microphones (names only appear once the app has been allowed to use one).
   useEffect(() => {
     if (!mic || !navigator.mediaDevices) return;
-    const list = () => navigator.mediaDevices.enumerateDevices().then(d => setMics(d.filter(x => x.kind === "audioinput")));
+    const list = () => navigator.mediaDevices.enumerateDevices().then(d => { setMics(d.filter(x => x.kind === "audioinput")); setCams(d.filter(x => x.kind === "videoinput")); });
     void navigator.mediaDevices.getUserMedia({ audio: true }).then(st => { st.getTracks().forEach(t => t.stop()); return list(); }).catch(() => list());
     navigator.mediaDevices.addEventListener("devicechange", list);
     return () => navigator.mediaDevices.removeEventListener("devicechange", list);
-  }, [mic]);
+  }, [mic, camStream]);
   // Choosing the microphone loads the model straight away when it is already downloaded.
   useEffect(() => {
     if (mic && voice && vs && vs.model && vs.engine && vs.phase === "idle") void voice.setup().then(setVs);
@@ -192,6 +204,58 @@ export function Record({ script, view, startAt, onEdit }: Props) {
       setLevels(Array(16).fill(0)); setWpm(0);
     };
   }, [live, micReady, editing, words, sentenceOf, toast, micId]);
+
+  // Camera preview (and the video for takes). camId "off" = audio-only takes.
+  useEffect(() => {
+    if (!inElectron || camId === "off" || !navigator.mediaDevices) { setCamStream(null); return; }
+    let st: MediaStream | null = null, gone = false;
+    openCamera(camId || undefined).then(x => { if (gone) x.getTracks().forEach(t => t.stop()); else { st = x; setCamStream(x); } })
+      .catch(err => { setCamStream(null); toast(`Camera not available: ${err?.message ?? err}`); });
+    return () => { gone = true; st?.getTracks().forEach(t => t.stop()); };
+  }, [camId, toast]);
+  useEffect(() => { if (camVideo.current) camVideo.current.srcObject = camStream; }, [camStream]);
+
+  // Recording: every start (Space) is a new take, saved next to the script.
+  useEffect(() => {
+    if (!live || !takes) return;
+    const io = takes;
+    let t: Take | null = null, stopped = false;
+    marksRef.current = [];
+    startTake(io, { scriptPath, camera: camStream, micId: micId || undefined })
+      .then(x => {
+        t = x;
+        if (stopped) { void finish(x); return; }
+        takeRef.current = x; setRecording(true); setTake(x.take);
+        marksRef.current.push({ sentence: curRef.current.s + 1, start: 0, text: S[curRef.current.s]?.spoken ?? "" });
+      })
+      .catch(err => toast(`Could not start recording: ${err?.message ?? err}`));
+    async function finish(x: Take) {
+      const marks = marksRef.current;
+      const last = marks.at(-1); if (last && last.end === undefined) last.end = +x.elapsed().toFixed(2);
+      const res = await x.stop({
+        script: scriptPath, title: script.title, take: x.take,
+        follow: mic ? { by: "voice", lagSeconds: vs ? +(vs.passMs / 1000 + 1).toFixed(1) : null } : { by: "simulated" },
+        sentences: marks,
+      });
+      if (res) { setLastTake({ file: res.file, take: x.take }); toast(`Take ${x.take} saved · ${(res.bytes / 1e6).toFixed(1)} MB`); }
+    }
+    return () => {
+      stopped = true; setRecording(false);
+      const x = t; takeRef.current = null;
+      if (x) void finish(x);
+    };
+  }, [live]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sentence timings for the take: when the prompter moves on, the last sentence ends.
+  useEffect(() => {
+    const x = takeRef.current;
+    if (!x) return;
+    const now = +x.elapsed().toFixed(2);
+    const marks = marksRef.current, last = marks.at(-1);
+    if (last && last.sentence === cur.s + 1) return;
+    if (last && last.end === undefined) last.end = now;
+    marks.push({ sentence: cur.s + 1, start: now, text: S[cur.s]?.spoken ?? "" });
+  }, [cur.s, S]);
 
   const toggleLive = useCallback(() => {
     if (!live && mic && !micReady) { toast(vs?.model ? "The speech model is still loading…" : "Download the speech model first (Prompter panel)"); return; }
@@ -274,7 +338,7 @@ export function Record({ script, view, startAt, onEdit }: Props) {
           </div>
         </div>
         <div className="strip">
-          <div className="cam"><span className="rec"><i />{mmss}</span></div>
+          <div className="cam">{camStream && <video ref={camVideo} autoPlay muted playsInline />}<span className={"rec" + (recording ? " on" : "")}><i />{mmss}</span></div>
           <div className="meters">
             <div className="meter"><span className="label">Mic</span>
               <div className="level">{levels.map((on, i) => { const f = i / 16; return <i key={i} className={on ? (f > 0.85 ? "x" : f > 0.65 ? "h" : "") : ""} style={{ height: on ? 6 + f * 16 : 3, opacity: on ? 1 : 0.25 }} />; })}</div>
@@ -322,6 +386,22 @@ export function Record({ script, view, startAt, onEdit }: Props) {
             <label className="row" htmlFor="mirror">Mirror for glass <input type="checkbox" className="switch" id="mirror" checked={mirror} onChange={e => setMirror(e.target.checked)} /></label>
             <label className="row" htmlFor="fs">Text size <input type="range" id="fs" min={wb ? 22 : 30} max={wb ? 48 : 64} value={fs} onChange={e => setFs(+e.target.value)} /></label>
             <div className="row">Shortcuts <span><kbd>Space</kbd> <kbd>←</kbd> <kbd>E</kbd> <kbd>M</kbd> <kbd>W</kbd></span></div>
+          </div>
+        </div>
+        <div className="panel">
+          <div className="ph"><h2>Recording</h2>{recording && <span className="meta rec-on">● REC take {take}</span>}</div>
+          <div className="mini">
+            {takes ? <>
+              <label className="row" htmlFor="camdev">Camera
+                <select id="camdev" className="micsel" value={camId} onChange={e => setCamId(e.target.value)} disabled={recording}>
+                  <option value="">System default</option>
+                  {cams.filter(d => d.deviceId).map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || "Camera"}</option>)}
+                  <option value="off">No camera (audio only)</option>
+                </select>
+              </label>
+              <div className="row small">Each press of Space records a new take {scriptPath ? "into takes/ next to the script" : "into Videos/Smart Teleprompter (open a script to save next to it)"}.</div>
+              {lastTake && <div className="row">Take {lastTake.take} saved <button className="btn ghost" onClick={() => void takes?.reveal(lastTake.file)}>Show file</button></div>}
+            </> : <div className="row small">Recording works in the desktop app.</div>}
           </div>
         </div>
         <div className="panel">

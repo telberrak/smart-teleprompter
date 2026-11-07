@@ -3,6 +3,7 @@ const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs/promises");
 const voice = require("./voice.cjs");
+const takes = require("./takes.cjs");
 
 const isDev = process.argv.includes("--dev");
 
@@ -67,6 +68,7 @@ ipcMain.handle("script:save", async (_e, file, content) => {
 });
 
 voice.register();
+takes.register();
 
 app.whenReady().then(() => {
   createWindow();
