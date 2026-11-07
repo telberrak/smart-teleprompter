@@ -107,6 +107,7 @@ interface Bridge {
   takes: TakesBridge;
   voice: VoiceBridge;
   openScript(): Promise<OpenedScript | null>;
+  reopenScript(path: string, slides?: string | null): Promise<OpenedScript | null>;
   openSlides(): Promise<OpenedFile | null>;
   saveScript(path: string, content: string): Promise<boolean>;
 }
@@ -132,6 +133,11 @@ function pick(accept: string): Promise<OpenedFile | null> {
 export async function openScript(): Promise<OpenedScript | null> {
   if (window.teleprompter) return window.teleprompter.openScript();
   return pick(".md,.txt");
+}
+
+/** The script you had open last time (null if it moved or this is the browser preview). */
+export async function reopenScript(path: string, slides?: string | null): Promise<OpenedScript | null> {
+  return window.teleprompter?.reopenScript ? window.teleprompter.reopenScript(path, slides) : null;
 }
 
 export async function openSlides(): Promise<OpenedFile | null> {

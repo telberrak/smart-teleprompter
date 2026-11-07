@@ -64,6 +64,19 @@ ipcMain.handle("slides:open", async () => {
   return { path: file, name: path.basename(file), content: await fs.readFile(file, "utf8") };
 });
 
+// Reopen the last script (and the slides you used with it) when the app starts.
+ipcMain.handle("script:reopen", async (_e, file, slidesFile) => {
+  if (typeof file !== "string" || !/\.(md|txt)$/i.test(file)) return null;
+  try {
+    const content = await fs.readFile(file, "utf8");
+    let slides = null;
+    if (typeof slidesFile === "string" && /\.(excalidraw|json)$/i.test(slidesFile)) {
+      try { slides = { path: slidesFile, name: path.basename(slidesFile), content: await fs.readFile(slidesFile, "utf8") }; } catch { /* moved */ }
+    }
+    return { path: file, name: path.basename(file), content, slides: slides ?? await findSlides(file) };
+  } catch { return null; } // moved or deleted: start as before
+});
+
 ipcMain.handle("script:save", async (_e, file, content) => {
   if (typeof file !== "string" || !/\.(md|txt)$/i.test(file)) throw new Error("Only .md or .txt scripts can be saved");
   await fs.writeFile(file, content, "utf8");

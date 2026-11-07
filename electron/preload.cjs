@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("teleprompter", {
   openScript: () => ipcRenderer.invoke("script:open"),
+  reopenScript: (file, slides) => ipcRenderer.invoke("script:reopen", file, slides),
   openSlides: () => ipcRenderer.invoke("slides:open"),
   saveScript: (file, content) => ipcRenderer.invoke("script:save", file, content),
   takes: {
