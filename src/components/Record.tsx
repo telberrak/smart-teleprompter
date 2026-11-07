@@ -342,7 +342,15 @@ export function Record({ script, view, startAt, onEdit }: Props) {
 /** First-run setup for the speech model, and its status afterwards. */
 function VoiceSetup({ vs, onSetup, onPick }: { vs: VoiceStatus; onSetup: () => void; onPick: () => void }) {
   if (!vs.engine) return <div className="vsetup err">{vs.engineError}</div>;
-  if (vs.phase === "ready") return <div className="vsetup ok">● Listening engine ready · {vs.modelName}</div>;
+  if (vs.phase === "ready") {
+    const secs = vs.passMs / 1000;
+    return (
+      <div className={"vsetup" + (secs > 1.5 ? "" : " ok")}>
+        <span className={secs > 1.5 ? "" : "ok"}>● Listening on the {vs.device} · {vs.modelName} · {secs.toFixed(1)} s per listen</span>
+        {secs > 1.5 && <span className="err">This computer is slow for live listening, so the text will lag behind your voice by about {Math.ceil(secs)} s.</span>}
+      </div>
+    );
+  }
   if (vs.phase === "downloading" || vs.phase === "loading")
     return <div className="vsetup"><span>{vs.message}</span><div className="bar"><b style={{ width: `${Math.round(vs.progress * 100)}%` }} /></div></div>;
   return (

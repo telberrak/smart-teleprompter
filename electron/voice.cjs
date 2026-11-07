@@ -35,9 +35,21 @@ function modelPath() {
 }
 const haveModel = () => { try { return fs.statSync(modelPath()).size > 10e6; } catch { return false; } };
 
+// Engine builds to try, fastest first: the Vulkan build runs on the graphics card (Windows, Linux),
+// the plain build on the CPU.
+function engines() {
+  const base = `@fugood/node-whisper-${process.platform}-${process.arch}`;
+  const list = [];
+  if (process.platform !== "darwin") list.push({ pkg: `${base}-vulkan`, gpu: true, label: "GPU (Vulkan)" });
+  list.push({ pkg: base, gpu: process.platform === "darwin", label: process.platform === "darwin" ? "GPU (Metal)" : "CPU" });
+  return list;
+}
 function engine() {
-  const pkg = `@fugood/node-whisper-${process.platform}-${process.arch}`;
-  try { return { mod: require(pkg), pkg }; } catch (e) { return { mod: null, pkg, error: String(e && e.message || e) }; }
+  const errors = [];
+  for (const c of engines()) {
+    try { return { ...c, mod: require(c.pkg) }; } catch (e) { errors.push(String(e && e.message || e)); }
+  }
+  return { mod: null, pkg: engines().at(-1).pkg, error: errors.join(" | ") };
 }
 
 function broadcast() {
@@ -54,6 +66,7 @@ function status() {
     engine: !!e.mod,
     engineError: e.mod ? "" : `whisper.cpp engine ${e.pkg} not found. Run npm install.`,
     model: haveModel(),
+    device, passMs,
     modelPath: modelPath(),
     modelName: path.basename(modelPath()),
     ...state,
@@ -81,20 +94,46 @@ async function download() {
   fs.renameSync(part, dest);
 }
 
+let device = "";
+let passMs = 0;
+let loading = false; // log whisper's info lines only while loading (they say which backend it uses)
 async function load() {
-  const e = engine();
-  if (!e.mod) throw new Error(`whisper.cpp engine not installed (${e.pkg}). Run npm install.`);
   const p = modelPath();
   if (ctx && ctxPath === p) return;
   if (ctx) { try { await ctx.release(); } catch { /* already gone */ } ctx = null; }
   set("loading", 0, "Loading the speech model…");
-  log("loading", p, fs.existsSync(p) ? fs.statSync(p).size : "missing", e.pkg, require(`${e.pkg}/package.json`).version);
-  // whisper.cpp's own warnings and errors go to voice.log too.
-  try { e.mod.WhisperContext.toggleNativeLog(true, (level, text) => { if (level !== "info" && level !== "debug") log("whisper", level, String(text).trim()); }); } catch { /* older addon */ }
-  ctx = await new e.mod.WhisperContext({ filePath: p, useGpu: false });
-  ctxPath = p;
-  set("ready", 1, "");
+  const tried = [];
+  for (const c of engines()) {
+    let mod;
+    try { mod = require(c.pkg); } catch { continue; }
+    try {
+      log("loading", p, fs.existsSync(p) ? fs.statSync(p).size : "missing", c.pkg, require(`${c.pkg}/package.json`).version);
+      try {
+        mod.WhisperContext.toggleNativeLog(true, (level, text) => {
+          if (loading || (level !== "info" && level !== "debug")) log("whisper", level, String(text).trim());
+        });
+      } catch { /* older addon */ }
+      loading = true;
+      const next = await new mod.WhisperContext({ filePath: p, useGpu: c.gpu });
+      // One timed pass: whisper always encodes 30 s of audio, so this is the cost of every pass.
+      set("loading", 0.5, `Measuring speed on the ${c.label}…`);
+      const t0 = Date.now();
+      await next.transcribeData(new Int16Array(16000 * 2).buffer, { language: "en", temperature: 0, temperatureInc: 0, maxThreads: threads() }).promise;
+      passMs = Date.now() - t0;
+      loading = false;
+      log("speed", { device: c.label, passMs });
+      ctx = next; ctxPath = p; device = c.label;
+      set("ready", 1, "");
+      return;
+    } catch (err) {
+      loading = false;
+      tried.push(`${c.label}: ${String(err && err.message || err)}`);
+      log("engine failed", c.pkg, String(err && err.stack || err));
+    }
+  }
+  throw new Error(tried.length ? `Could not start whisper.cpp. ${tried.join(" · ")}` : "whisper.cpp engine not installed. Run npm ci.");
 }
+const threads = () => Math.max(1, Math.min(8, os.cpus().length - 1));
 
 async function setup() {
   try {
@@ -127,11 +166,11 @@ async function transcribe(pcm, prompt) {
       language: "en",
       temperature: 0,
       temperatureInc: 0, // no slow retries at higher temperatures: the next pass comes soon anyway
-      maxThreads: Math.max(1, Math.min(4, os.cpus().length - 1)),
+      maxThreads: threads(),
       prompt: prompt || undefined,
     });
     // A 4 s window should take well under a second. If a pass runs away, ask it to stop.
-    const guard = setTimeout(() => { log("pass too slow, stopping it", { secs: samples.length / 16000 }); void stop(); }, 6000);
+    const guard = setTimeout(() => { log("pass too slow, stopping it", { secs: samples.length / 16000 }); void stop(); }, 30000);
     const r = await promise.finally(() => clearTimeout(guard));
     log("heard", { ms: Date.now() - t0, secs: +(samples.length / 16000).toFixed(2), peak, text: r.result });
     return { text: r.result || "", ms: Date.now() - t0 };

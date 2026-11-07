@@ -7,6 +7,7 @@ export interface OpenedScript extends OpenedFile { slides?: OpenedFile | null }
 export interface VoiceStatus {
   engine: boolean; engineError: string;
   model: boolean; modelPath: string; modelName: string;
+  device: string; passMs: number;
   phase: "idle" | "downloading" | "loading" | "ready" | "error";
   progress: number; message: string;
 }
