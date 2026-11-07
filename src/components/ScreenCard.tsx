@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Script } from "../lib/script";
 import type { Slides } from "../lib/excalidraw";
 import { Diagram } from "./Diagram";
@@ -9,7 +11,7 @@ export interface SlideView { slides: Slides | null; frameForStep: Map<number, nu
  * What the viewer sees at diagram step `step`: the matching Excalidraw frame when slides
  * are loaded, the drawn sample for the bundled script, or else the ON SCREEN note text.
  */
-export function ScreenCard({ script, step, ghost, view }: { script: Script; step: number; ghost?: boolean; view: SlideView }) {
+function Card({ script, step, ghost, view }: { script: Script; step: number; ghost?: boolean; view: SlideView }) {
   const fi = view.frameForStep.get(step);
   if (view.slides && fi !== undefined && fi >= 0) return <Slide frame={view.slides.frames[fi]} />;
   if (!view.slides && script.title === "1.3 What is an API?") return <Diagram upTo={step} ghost={ghost} />;
@@ -21,5 +23,26 @@ export function ScreenCard({ script, step, ghost, view }: { script: Script; step
       <p>{cur?.screen ?? (cur ? `Step ${cur.step}` : "")}</p>
       {cur?.section && <span className="nc-sec">{cur.section}</span>}
     </div>
+  );
+}
+
+/** The card, plus click-to-enlarge: opens it full window; Esc or a click closes it. */
+export function ScreenCard(props: { script: Script; step: number; ghost?: boolean; view: SlideView }) {
+  const [big, setBig] = useState(false);
+  useEffect(() => {
+    if (!big) return;
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setBig(false); } };
+    window.addEventListener("keydown", k, true);
+    return () => window.removeEventListener("keydown", k, true);
+  }, [big]);
+  return (
+    <>
+      <div className="zoomable" title="Click to enlarge" onClick={() => setBig(true)}><Card {...props} /></div>
+      {big && createPortal(
+        <div className="lightbox" onClick={() => setBig(false)} role="dialog" aria-label="Slide, enlarged">
+          <div className="lb-slide"><Card {...props} /></div>
+          <span className="lb-hint">Esc or click to close</span>
+        </div>, document.body)}
+    </>
   );
 }
