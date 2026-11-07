@@ -423,3 +423,5 @@ button.pd-item:hover{border-color:var(--tungsten)}
 .pd-wait.pd-stale{flex-direction:column;gap:8px;text-align:center;background:rgba(12,15,20,.82);padding:20px}
 .pd-wait.pd-stale span{font-size:12.5px;color:var(--ink-2);max-width:420px}
 .restoring{padding:40px;color:var(--ink-3);font-size:14px}
+.pd-wait.pd-building{background:rgba(12,15,20,.82);color:var(--ink);font-size:14px}
+.pd-done{margin:6px 0 0;font-size:12.5px;color:#6fdc8c;line-height:1.4}

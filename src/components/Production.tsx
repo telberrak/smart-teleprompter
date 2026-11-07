@@ -203,7 +203,23 @@ export function Production({ script, view, scriptPath }: Props) {
     const base = old ? remove(prod, old.id) : prod;
     setProd(add(base, { track: "music", file, volume: -20, duck: "gentle", fadeOut: 3, start: 0, end: prod.seconds } as Omit<Clip, "id">));
   };
-  const rebuild = () => { if (segs.length) { setProd(buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand })); setSel(null); } };
+  // Start the timeline over from the cut (building the cut first when it is missing or out of date).
+  const [rebuilt, setRebuilt] = useState("");
+  useEffect(() => { if (!rebuilt) return; const id = setTimeout(() => setRebuilt(""), 6000); return () => clearTimeout(id); }, [rebuilt]);
+  const rebuild = async () => {
+    if (!segs.length || busy.current) return;
+    if (!window.confirm("Start the timeline over from your cut?\n\nTitles, music and your edits are removed; your brand kit is kept.")) return;
+    setRebuilt(""); setError("");
+    if (io && (cutState === "stale" || cutState === "missing")) {
+      busy.current = true; setBuilding(true); setProgress(0);
+      try { const c = await io.productionCut(scriptPath, segs); setCut(c); setCutState("fresh"); }
+      catch (e) { setError(String((e as Error).message ?? e)); return; }
+      finally { busy.current = false; setBuilding(false); setProgress(null); }
+    }
+    setProd(buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand }));
+    setSel(null); seek(0);
+    setRebuilt(`Done: timeline rebuilt from your cut (${segs.length} sentences, ${fmt(segs.reduce((a, x) => a + x.end - x.start, 0))}).`);
+  };
 
   // Timeline dragging: titles and sound effects move, snapping to sentence edges.
   const points = useMemo(() => snapPoints(segs), [segs]);
@@ -327,6 +343,7 @@ export function Production({ script, view, scriptPath }: Props) {
     try { if (files.length) await io.deleteProduction(scriptPath); } catch (e) { setError(String((e as Error).message ?? e)); return; }
     setResult(null); setShortFile(null); setSel(null); seek(0);
     setProd(buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand }));
+    setRebuilt(`Done: video deleted${files.length ? ` (${files.length} file${files.length === 1 ? "" : "s"} in the Recycle Bin)` : ""}, timeline started over from your cut.`);
   };
 
   const doExport = async () => {
@@ -378,7 +395,11 @@ export function Production({ script, view, scriptPath }: Props) {
           <div className="pd-item"><i className="sw k-voice" /><span><b>Final cut</b><small>{fmt(total)} · {segs.length} sentences{needsRebuild ? " · needs a rebuild" : ""}</small></span></div>
           <div className="pd-item"><i className="sw k-slide" /><span><b>Slides</b><small>{clipsOn(prod, "slides").length} steps{view.slides ? ` from ${view.slides.fileName}` : " (ON SCREEN notes)"}</small></span></div>
           <div className="pd-item"><i className="sw k-cam" /><span><b>Camera</b><small>{hasCamera ? "in the cut" : "audio-only takes"}</small></span></div>
-          <button className="btn ghost" onClick={rebuild} title="Start again from the cut: your brand kit is kept">Rebuild from the cut</button>
+          <button className="btn ghost" onClick={() => void rebuild()} disabled={building} title="Start again from the cut: your brand kit is kept">
+            {building ? `Building the cut… ${progress !== null ? Math.round(progress * 100) + "%" : ""}` : "Rebuild from the cut"}
+          </button>
+          {building && <div className="vsetup"><div className="bar"><b style={{ width: `${Math.round((progress ?? 0) * 100)}%` }} /></div></div>}
+          {rebuilt && <p className="pd-done" role="status">{rebuilt}</p>}
         </>}
         {tab === "text" && <>
           <span className="label">Add at the playhead</span>
@@ -422,7 +443,7 @@ export function Production({ script, view, scriptPath }: Props) {
           <video ref={videoRef} className={"pd-cam " + (now?.layout ?? "full") + " " + (now?.corner ?? "br")} src={cut ? mediaUrl(cut.file) : undefined}
             playsInline preload="auto" onEnded={() => setPlaying(false)} />
           <canvas ref={overlayRef} className="pd-over" width={1920} height={1080} aria-hidden="true" />
-          {building && <div className="pd-wait">Building the cut… {progress !== null ? Math.round(progress * 100) + "%" : ""}</div>}
+          {building && <div className="pd-wait pd-building">Building the cut… {progress !== null ? Math.round(progress * 100) + "%" : ""}</div>}
           {!building && needsRebuild && cutState !== "checking" && (
             <div className="pd-wait pd-stale">
               <b>{cutState === "missing" ? "The preview needs your cut" : "Your cut changed in Review"}</b>
