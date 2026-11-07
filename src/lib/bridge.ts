@@ -15,6 +15,7 @@ export interface VoiceBridge {
   status(): Promise<VoiceStatus>;
   setup(): Promise<VoiceStatus>;
   pickModel(): Promise<VoiceStatus>;
+  log(...parts: unknown[]): Promise<void>;
   transcribe(pcm: Int16Array, prompt: string): Promise<Heard | null>;
   onState(cb: (s: VoiceStatus) => void): () => void;
 }

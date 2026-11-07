@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("teleprompter", {
     status: () => ipcRenderer.invoke("voice:status"),
     setup: () => ipcRenderer.invoke("voice:setup"),
     pickModel: () => ipcRenderer.invoke("voice:pickModel"),
+    log: (...parts) => ipcRenderer.invoke("voice:log", ...parts),
     transcribe: (pcm, prompt) => ipcRenderer.invoke("voice:transcribe", pcm, prompt),
     onState: cb => {
       const h = (_e, s) => cb(s);

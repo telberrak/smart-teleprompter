@@ -19,6 +19,12 @@ let ctxPath = null;
 let busy = false;
 let state = { phase: "idle", progress: 0, message: "" }; // idle | downloading | loading | ready | error
 
+// Diagnostics: voice.log next to package.json (gitignored), newest at the bottom.
+const logFile = () => path.join(app.getAppPath(), "voice.log");
+function log(...parts) {
+  try { fs.appendFileSync(logFile(), `${new Date().toISOString()} ${parts.map(p => (typeof p === "string" ? p : JSON.stringify(p))).join(" ")}\n`); } catch { /* read-only folder */ }
+}
+
 function readSettings() { try { return JSON.parse(fs.readFileSync(settingsFile(), "utf8")); } catch { return {}; } }
 function writeSettings(s) { fs.mkdirSync(path.dirname(settingsFile()), { recursive: true }); fs.writeFileSync(settingsFile(), JSON.stringify(s, null, 2)); }
 
@@ -37,7 +43,10 @@ function engine() {
 function broadcast() {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send("voice:state", status());
 }
-function set(phase, progress = 0, message = "") { state = { phase, progress, message }; broadcast(); }
+function set(phase, progress = 0, message = "") {
+  if (phase !== state.phase || phase === "error") log("state", phase, message);
+  state = { phase, progress, message }; broadcast();
+}
 
 function status() {
   const e = engine();
@@ -79,6 +88,7 @@ async function load() {
   if (ctx && ctxPath === p) return;
   if (ctx) { try { await ctx.release(); } catch { /* already gone */ } ctx = null; }
   set("loading", 0, "Loading the speech model…");
+  log("loading", p, fs.existsSync(p) ? fs.statSync(p).size : "missing", e.pkg);
   ctx = await new e.mod.WhisperContext({ filePath: p, useGpu: false });
   ctxPath = p;
   set("ready", 1, "");
@@ -97,7 +107,8 @@ async function setup() {
 
 /** pcm: 16-bit mono 16 kHz samples. prompt: the script text around the speaker, to bias recognition. */
 async function transcribe(pcm, prompt) {
-  if (!ctx || busy) return null;
+  if (!ctx) { log("transcribe: no model loaded"); return null; }
+  if (busy) return null;
   busy = true;
   try {
     const buf = pcm instanceof ArrayBuffer ? pcm : pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength);
@@ -111,8 +122,12 @@ async function transcribe(pcm, prompt) {
     // Never let one slow pass block the next ones: a 4 s window should take well under a second.
     const guard = setTimeout(() => { void stop(); }, 5000);
     const r = await promise.finally(() => clearTimeout(guard));
+    const samples = new Int16Array(buf);
+    let peak = 0; for (let i = 0; i < samples.length; i += 8) peak = Math.max(peak, Math.abs(samples[i]));
+    log("heard", { ms: Date.now() - t0, secs: +(samples.length / 16000).toFixed(2), peak, text: r.result });
     return { text: r.result || "", ms: Date.now() - t0 };
   } catch (err) {
+    log("transcribe error", String(err && err.stack || err));
     return { text: "", ms: 0, error: String(err && err.message || err) };
   } finally {
     busy = false;
@@ -120,7 +135,9 @@ async function transcribe(pcm, prompt) {
 }
 
 function register() {
+  log("app start", process.platform, process.arch, "electron", process.versions.electron);
   ipcMain.handle("voice:status", () => status());
+  ipcMain.handle("voice:log", (_e, ...parts) => { log("ui", ...parts); });
   ipcMain.handle("voice:setup", () => setup());
   ipcMain.handle("voice:transcribe", (_e, pcm, prompt) => transcribe(pcm, prompt));
   ipcMain.handle("voice:pickModel", async () => {

@@ -74,6 +74,9 @@ export function Record({ script, view, startAt, onEdit }: Props) {
   const setSource = (v: Source) => { setSourceRaw(v); try { localStorage.setItem("tp.voice", v); } catch { /* private window */ } };
   const [vs, setVs] = useState<VoiceStatus | null>(null);
   const [heard, setHeard] = useState("");
+  const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
+  const [micId, setMicIdRaw] = useState(() => { try { return localStorage.getItem("tp.mic") ?? ""; } catch { return ""; } });
+  const setMicId = (id: string) => { setMicIdRaw(id); try { localStorage.setItem("tp.mic", id); } catch { /* private window */ } };
   const mic = source === "mic";
   const micReady = mic && vs?.phase === "ready";
   const curRef = useRef(cur); curRef.current = cur;
@@ -131,6 +134,14 @@ export function Record({ script, view, startAt, onEdit }: Props) {
     const off = voice.onState(setVs);
     return () => { alive = false; off(); };
   }, []);
+  // The list of microphones (names only appear once the app has been allowed to use one).
+  useEffect(() => {
+    if (!mic || !navigator.mediaDevices) return;
+    const list = () => navigator.mediaDevices.enumerateDevices().then(d => setMics(d.filter(x => x.kind === "audioinput")));
+    void navigator.mediaDevices.getUserMedia({ audio: true }).then(st => { st.getTracks().forEach(t => t.stop()); return list(); }).catch(() => list());
+    navigator.mediaDevices.addEventListener("devicechange", list);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", list);
+  }, [mic]);
   // Choosing the microphone loads the model straight away when it is already downloaded.
   useEffect(() => {
     if (mic && voice && vs && vs.model && vs.engine && vs.phase === "idle") void voice.setup().then(setVs);
@@ -142,8 +153,9 @@ export function Record({ script, view, startAt, onEdit }: Props) {
     const v = voice;
     let m: Mic | null = null, stopped = false, inflight = false;
     const hist: { t: number; w: number }[] = [];
-    startMic().then(x => { if (stopped) x.stop(); else m = x; })
-      .catch(err => { toast(`Microphone not available: ${err?.message ?? err}`); setLive(false); });
+    startMic(micId || undefined).then(x => { if (stopped) x.stop(); else { m = x; void v.log("mic open", x.info); } })
+      .catch(err => { void v.log("mic error", String(err?.message ?? err)); toast(`Microphone not available: ${err?.message ?? err}`); setLive(false); });
+    const diag = setInterval(() => { if (m) void v.log("mic", { peak: m.peak(), quietFor: +m.quietFor().toFixed(1), pos: curRef.current.w }); }, 2000);
     const meter = setInterval(() => {
       if (!m) return;
       const amp = m.level();
@@ -161,6 +173,7 @@ export function Record({ script, view, startAt, onEdit }: Props) {
         if (res.error) { toast(`Speech engine: ${res.error}`); return; }
         setHeard(res.text.trim());
         const hit = align(words.norm, curRef.current.w, heardWords(res.text));
+        void v.log("align", { from: curRef.current.w, to: hit?.pos ?? null, score: hit ? +hit.score.toFixed(1) : null, near: words.raw.slice(Math.max(0, curRef.current.w - 2), curRef.current.w + 8).join(" ") });
         if (hit && hit.pos !== curRef.current.w) {
           setCur({ w: hit.pos, s: sentenceOf(hit.pos) });
           const now = performance.now();
@@ -174,10 +187,10 @@ export function Record({ script, view, startAt, onEdit }: Props) {
       } finally { inflight = false; }
     }, 350);
     return () => {
-      stopped = true; clearInterval(meter); clearInterval(listen); m?.stop();
+      stopped = true; clearInterval(meter); clearInterval(diag); clearInterval(listen); m?.stop();
       setLevels(Array(16).fill(0)); setWpm(0);
     };
-  }, [live, micReady, editing, words, sentenceOf, toast]);
+  }, [live, micReady, editing, words, sentenceOf, toast, micId]);
 
   const toggleLive = useCallback(() => {
     if (!live && mic && !micReady) { toast(vs?.model ? "The speech model is still loading…" : "Download the speech model first (Prompter panel)"); return; }
@@ -298,6 +311,12 @@ export function Record({ script, view, startAt, onEdit }: Props) {
                 <button className={mic ? "on" : ""} aria-pressed={mic} disabled={!voice} title={voice ? "Follow your real voice (offline, whisper.cpp)" : "Microphone works in the desktop app"} onClick={() => setSource("mic")}>Microphone</button>
               </span>
             </div>
+            {mic && <label className="row" htmlFor="micdev">Microphone
+              <select id="micdev" className="micsel" value={micId} onChange={e => setMicId(e.target.value)}>
+                <option value="">System default</option>
+                {mics.filter(d => d.deviceId && d.deviceId !== "default").map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || "Microphone"}</option>)}
+              </select>
+            </label>}
             {mic && vs && <VoiceSetup vs={vs} onSetup={() => voice && void voice.setup().then(setVs)} onPick={() => voice && void voice.pickModel().then(setVs)} />}
             <label className="row" htmlFor="mirror">Mirror for glass <input type="checkbox" className="switch" id="mirror" checked={mirror} onChange={e => setMirror(e.target.checked)} /></label>
             <label className="row" htmlFor="fs">Text size <input type="range" id="fs" min={wb ? 22 : 30} max={wb ? 48 : 64} value={fs} onChange={e => setFs(+e.target.value)} /></label>
