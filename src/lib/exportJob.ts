@@ -3,7 +3,9 @@
 import { useSyncExternalStore } from "react";
 import { takes as io, type ProductionResult } from "./bridge";
 
+export type JobKind = "production" | "cut" | "whiteboard";
 export interface ExportJob {
+  kind: JobKind;
   scriptPath: string | null;
   running: boolean;
   /** 0..1 */
@@ -12,6 +14,8 @@ export interface ExportJob {
   stage: string;
   result: ProductionResult | null;
   short: string | null;
+  /** Review's exports: what exportCut / exportWhiteboard returned. */
+  data?: unknown;
   error: string;
 }
 
@@ -21,8 +25,8 @@ const emit = () => subs.forEach(f => f());
 
 export const exportJob = {
   get: () => job,
-  start(scriptPath: string | null) {
-    job = { scriptPath, running: true, progress: 0, stage: "Preparing slides", result: null, short: null, error: "" };
+  start(scriptPath: string | null, kind: JobKind = "production", stage = "Preparing slides") {
+    job = { kind, scriptPath, running: true, progress: 0, stage, result: null, short: null, error: "" };
     emit();
   },
   set(patch: Partial<ExportJob>) { if (job) { job = { ...job, ...patch }; emit(); } },

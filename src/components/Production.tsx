@@ -76,7 +76,7 @@ export function Production({ script, view, scriptPath }: Props) {
   const [magnet, setMagnet] = useState(true);
   // The export lives outside this screen (it keeps running when you switch tabs).
   const job = useExportJob();
-  const mine = job && job.scriptPath === scriptPath ? job : null;
+  const mine = job && job.kind === "production" && job.scriptPath === scriptPath ? job : null;
   const result = mine?.result ?? null;
   const exporting = !!mine?.running;
   const [outs, setOuts] = useState(() => store.get("tp.outs", { mp4: true, srt: true, txt: true, png: true, short: false }));
@@ -114,7 +114,22 @@ export function Production({ script, view, scriptPath }: Props) {
   };
   const undo = () => travel("past");
   const redo = () => travel("future");
-  const setBrand = (b: Brand) => { setBrandRaw(b); store.set("tp.brand", b); setProd(p => ({ ...p, brand: b })); };
+  // The brand is written into the titles that use it (lower third, title card, outro); a text you typed yourself is kept.
+  const setBrand = (b: Brand) => {
+    const old = brand;
+    setBrandRaw(b); store.set("tp.brand", b);
+    const swap = (x: string, from: string, to: string) => (from !== to && x === from ? to : x);
+    setProd(p => ({
+      ...p, brand: b,
+      clips: p.clips.map(c => {
+        if (c.track !== "titles") return c;
+        if (c.kind === "lower") return { ...c, text: swap(c.text, old.name, b.name), sub: swap(c.sub, old.course, b.course) };
+        if (c.kind === "title") return { ...c, sub: swap(c.sub, old.course, b.course) };
+        if (c.kind === "outro") return { ...c, text: swap(c.text, old.outro, b.outro) };
+        return c;
+      }),
+    }));
+  };
 
   // Takes → cut → production (rebuilt when the cut changed in Review).
   useEffect(() => {
@@ -127,7 +142,16 @@ export function Production({ script, view, scriptPath }: Props) {
   useEffect(() => {
     if (!loaded || !segs.length) return;
     const saved = store.get<Prod | null>("tp.prod:" + scriptPath, null);
-    setProdRaw(saved ?? buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand }));
+    // Titles still showing the placeholder brand ("Your name", "Your course") get yours.
+    const fill = (p: Prod): Prod => ({
+      ...p, brand,
+      clips: p.clips.map(c => c.track !== "titles" ? c : {
+        ...c,
+        text: c.text === DEFAULT_BRAND.name ? brand.name : c.text === DEFAULT_BRAND.outro ? brand.outro : c.text,
+        sub: c.sub === DEFAULT_BRAND.course ? brand.course : c.sub,
+      }),
+    });
+    setProdRaw(fill(saved ?? buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand })));
     hist.current = { past: [], future: [] };
     if (!io) return;
     setCutState("checking");
@@ -823,7 +847,7 @@ export function Production({ script, view, scriptPath }: Props) {
           <span className="label">YouTube description</span>
           <pre className="pd-desc">{description(prod, segs, script)}</pre>
           <button className="btn primary pd-go" onClick={() => void doExport()} disabled={!!job?.running || building || needsRebuild}>
-            {exporting ? `${mine!.stage}… ${mine!.stage === "Exporting" ? Math.round(mine!.progress * 100) + "%" : ""}` : job?.running ? "Another script is exporting…" : `Export ${Object.values(outs).filter(Boolean).length} file${Object.values(outs).filter(Boolean).length === 1 ? "" : "s"}`}
+            {exporting ? `${mine!.stage}… ${mine!.stage === "Exporting" ? Math.round(mine!.progress * 100) + "%" : ""}` : job?.running ? "Another export is running…" : `Export ${Object.values(outs).filter(Boolean).length} file${Object.values(outs).filter(Boolean).length === 1 ? "" : "s"}`}
           </button>
           {exporting && <div className="vsetup"><div className="bar"><b style={{ width: `${Math.round((mine!.stage === "Exporting" ? mine!.progress : 0) * 100)}%` }} /></div></div>}
           {exporting && <span className="small-note">You can switch to another tab: the export carries on and the files show here when it is done.</span>}

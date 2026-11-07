@@ -8,7 +8,7 @@ import { CORNERS, isCorner, loadCorner, saveCorner, type Corner } from "../lib/b
 import { cues, toSrt } from "../lib/captions";
 import { buildEdit, emptyReview, hiddenKey, timeline, totalSeconds, type Pick, type Segment, type TakeInfo } from "../lib/edit";
 import { useReview } from "../lib/reviewState";
-import { exportJob } from "../lib/exportJob";
+import { exportJob, useExportJob } from "../lib/exportJob";
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
@@ -25,14 +25,20 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
   const [loading, setLoading] = useState(false);
   const { review, update: setReview } = useReview(scriptPath);
   const [sel, setSel] = useState<number | null>(null);
-  const [progress, setProgress] = useState<number | null>(null);
-  const [result, setResult] = useState<ExportResult | null>(null);
+  // Exports run outside this screen, so they carry on when you switch tabs (see lib/exportJob.ts).
+  const job = useExportJob();
+  const mineCut = job && job.kind === "cut" && job.scriptPath === scriptPath ? job : null;
+  const mineWb = job && job.kind === "whiteboard" && job.scriptPath === scriptPath ? job : null;
+  const running = job?.running ? job : null;
+  const progress = running && (running === mineCut || running === mineWb) ? (running.stage === "Exporting" ? running.progress : 0) : null;
+  const result = (mineCut && !mineCut.running ? mineCut.data : null) as ExportResult | null;
+  const jobError = (mineCut ?? mineWb)?.error ?? "";
   const [burn, setBurn] = useState(() => { try { return localStorage.getItem("tp.burn") === "1"; } catch { return false; } });
   const [error, setError] = useState("");
-  const [wb, setWb] = useState<WhiteboardResult | null>(null);
+  const wb = (mineWb && !mineWb.running ? mineWb.data : null) as WhiteboardResult | null;
   const flag = (k: string, dflt: boolean) => { try { const v = localStorage.getItem(k); return v === null ? dflt : v === "1"; } catch { return dflt; } };
-  const [wbCaptions, setWbCaptions] = useState(() => flag("tp.wbcap", true));
-  const [remotion, setRemotion] = useState(() => flag("tp.remotion", true));
+  const [wbCaptions, setWbCaptions] = useState(() => flag("tp.wbcap.v2", false));
+  const [remotion, setRemotion] = useState(() => flag("tp.remotion.v2", false));
   const [corner, setCornerRaw] = useState<Corner>(loadCorner);
   const setCorner = (c: Corner) => { setCornerRaw(c); saveCorner(c); };
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -47,8 +53,6 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
   }, [scriptPath]);
   useEffect(() => { void load(); }, [load]);
   // Progress only for exports started here (Production's jobs report on the same channel).
-  const busy = useRef(false);
-  useEffect(() => io?.onExportProgress(x => { if (busy.current) setProgress(x); }), []);
 
   const edit = useMemo(() => buildEdit(takes, S.length, review.picks, review.hidden), [takes, S.length, review]);
   const lastTake = takes.reduce((a, t) => Math.max(a, t.take), 0);
@@ -115,30 +119,30 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
 
   const doExport = async () => {
     if (!io) return;
-    if (exportJob.get()?.running) { setError("Production is exporting in the background: wait for it to finish (see the header)."); return; }
-    setError(""); setResult(null); setProgress(0); busy.current = true;
+    if (exportJob.get()?.running) { setError("Another export is running in the background: wait for it to finish (see the header)."); return; }
+    setError(""); exportJob.start(scriptPath, "cut", "Exporting");
     try { localStorage.setItem("tp.burn", burn ? "1" : "0"); } catch { /* private window */ }
     const srt = toSrt(cues(segs, n => S[n - 1]?.spoken ?? ""));
-    try { setResult(await io.exportCut(scriptPath, segs, { srt, burn })); }
-    catch (e) { setError(String((e as Error).message ?? e)); }
-    finally { busy.current = false; setProgress(null); }
+    try { const r = await io.exportCut(scriptPath, segs, { srt, burn }); exportJob.set({ running: false, progress: 1, stage: "Done", data: r }); }
+    catch (e) { exportJob.set({ running: false, stage: "Failed", error: String((e as Error).message ?? e) }); }
   };
 
   // Whiteboard video: slides full screen at each ON SCREEN step, camera in a round bubble, captions.
   const doWhiteboard = async () => {
     if (!io) return;
-    if (exportJob.get()?.running) { setError("Production is exporting in the background: wait for it to finish (see the header)."); return; }
-    setError(""); setWb(null); setProgress(0); busy.current = true;
-    try { localStorage.setItem("tp.wbcap", wbCaptions ? "1" : "0"); localStorage.setItem("tp.remotion", remotion ? "1" : "0"); } catch { /* private window */ }
+    if (exportJob.get()?.running) { setError("Another export is running in the background: wait for it to finish (see the header)."); return; }
+    setError(""); exportJob.start(scriptPath, "whiteboard", "Preparing slides");
+    try { localStorage.setItem("tp.wbcap.v2", wbCaptions ? "1" : "0"); localStorage.setItem("tp.remotion.v2", remotion ? "1" : "0"); } catch { /* private window */ }
     try {
       const name = (st: number) => `step-${String(st).padStart(2, "0")}.png`;
       const timeline = buildTimeline(segs, script, { hasCamera: segs.some(s => s.video), video: "", image: name, corner });
       const images: Record<string, Uint8Array> = {};
       for (const st of slideSteps(timeline.scenes)) images[name(st)] = await stepPng(script, view, st);
       const { mask, ring } = await bubblePngs(360);
-      setWb(await io.exportWhiteboard(scriptPath, segs, { timeline, images, mask, ring, srt: toSrt(timeline.captions), captions: wbCaptions, remotion }));
-    } catch (e) { setError(String((e as Error).message ?? e)); }
-    finally { busy.current = false; setProgress(null); }
+      exportJob.set({ stage: "Exporting", progress: 0 });
+      const r = await io.exportWhiteboard(scriptPath, segs, { timeline, images, mask, ring, srt: toSrt(timeline.captions), captions: wbCaptions, remotion });
+      exportJob.set({ running: false, progress: 1, stage: "Done", data: r });
+    } catch (e) { exportJob.set({ running: false, stage: "Failed", error: String((e as Error).message ?? e) }); }
   };
 
   const cur = sel !== null ? S[sel] : null;
@@ -217,8 +221,8 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
           </div>
           <div className="mini-slide"><ScreenCard script={script} view={view} step={step} /></div>
           <span className="label">Export</span>
-          <button className="btn primary" onClick={() => void doExport()} disabled={!segs.length || progress !== null}>
-            {progress !== null ? `Exporting… ${Math.round(progress * 100)}%` : `Export MP4 (${segs.length} sentences)`}
+          <button className="btn primary" onClick={() => void doExport()} disabled={!segs.length || !!running}>
+            {mineCut?.running ? `Exporting… ${Math.round((progress ?? 0) * 100)}%` : `Export MP4 (${segs.length} sentences)`}
           </button>
           {progress !== null && <div className="vsetup"><div className="bar"><b style={{ width: `${Math.round(progress * 100)}%` }} /></div></div>}
           <label className="row" htmlFor="burn">Also make a copy with captions burnt in <input type="checkbox" className="switch" id="burn" checked={burn} onChange={e => setBurn(e.target.checked)} /></label>
@@ -228,8 +232,8 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
           {result && <div className="out"><span className="ext">MP4</span><span className="f" title={result.file}>{result.file.split(/[\\/]/).pop()} · {fmt(result.seconds)}</span><button className="linkbtn" onClick={() => void io?.reveal(result.file)}>Show file</button></div>}
           <span className="label">Whiteboard video</span>
           <span className="small-note">Slides full screen at each ON SCREEN note, your camera in a round bubble in the corner you choose; the cold open stays on camera.</span>
-          <button className="btn primary" onClick={() => void doWhiteboard()} disabled={!segs.length || progress !== null}>
-            {progress !== null ? `Exporting… ${Math.round(progress * 100)}%` : "Make whiteboard video"}
+          <button className="btn primary" onClick={() => void doWhiteboard()} disabled={!segs.length || !!running}>
+            {mineWb?.running ? `${mineWb.stage}… ${mineWb.stage === "Exporting" ? Math.round(mineWb.progress * 100) + "%" : ""}` : "Make whiteboard video"}
           </button>
           <label className="row" htmlFor="wbcorner">Camera bubble
             <select id="wbcorner" className="micsel" value={corner} onChange={e => isCorner(e.target.value) && setCorner(e.target.value)}>
@@ -243,7 +247,7 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
           {wb?.remotion && <div className="out"><span className="ext">TSX</span><span className="f" title={wb.remotion}>{wb.remotion.split(/[\\/]/).pop()} · Remotion project</span><button className="linkbtn" onClick={() => void io?.reveal(wb.remotion!)}>Show folder</button></div>}
           {wb?.remotion && <span className="small-note">In that folder: <code>npm install</code>, then <code>npm run studio</code> to edit or <code>npm run render</code>.</span>}
           {wb?.remotionError && <div className="vsetup err">Remotion project failed: {wb.remotionError}</div>}
-          {error && <div className="vsetup err">{error}</div>}
+          {(error || jobError) && <div className="vsetup err">{error || jobError}</div>}
           <span className="label">Recordings</span>
           <div className="rv-takes">
             {[...takes].sort((a, b) => a.take - b.take).map(t => (
