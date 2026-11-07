@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Script } from "../lib/script";
 import { ScreenCard, type SlideView } from "./ScreenCard";
-import { takes as io, mediaUrl, type ExportResult } from "../lib/bridge";
+import { takes as io, mediaUrl, type ExportResult, type WhiteboardResult } from "../lib/bridge";
+import { buildTimeline, slideSteps } from "../lib/storyboard";
+import { bubblePngs, stepPng } from "../lib/slideImage";
 import { cues, toSrt } from "../lib/captions";
 import { buildEdit, timeline, totalSeconds, type Segment, type TakeInfo } from "../lib/edit";
 
@@ -26,6 +28,10 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
   const [result, setResult] = useState<ExportResult | null>(null);
   const [burn, setBurn] = useState(() => { try { return localStorage.getItem("tp.burn") === "1"; } catch { return false; } });
   const [error, setError] = useState("");
+  const [wb, setWb] = useState<WhiteboardResult | null>(null);
+  const flag = (k: string, dflt: boolean) => { try { const v = localStorage.getItem(k); return v === null ? dflt : v === "1"; } catch { return dflt; } };
+  const [wbCaptions, setWbCaptions] = useState(() => flag("tp.wbcap", true));
+  const [remotion, setRemotion] = useState(() => flag("tp.remotion", true));
   const videoRef = useRef<HTMLVideoElement>(null);
   const queue = useRef<{ segs: Segment[]; i: number } | null>(null);
 
@@ -75,6 +81,22 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
     const srt = toSrt(cues(segs, n => S[n - 1]?.spoken ?? ""));
     try { setResult(await io.exportCut(scriptPath, segs, { srt, burn })); }
     catch (e) { setError(String((e as Error).message ?? e)); }
+    finally { setProgress(null); }
+  };
+
+  // Whiteboard video: slides full screen at each ON SCREEN step, camera in a round bubble, captions.
+  const doWhiteboard = async () => {
+    if (!io) return;
+    setError(""); setWb(null); setProgress(0);
+    try { localStorage.setItem("tp.wbcap", wbCaptions ? "1" : "0"); localStorage.setItem("tp.remotion", remotion ? "1" : "0"); } catch { /* private window */ }
+    try {
+      const name = (st: number) => `step-${String(st).padStart(2, "0")}.png`;
+      const timeline = buildTimeline(segs, script, { hasCamera: segs.some(s => s.video), video: "", image: name });
+      const images: Record<string, Uint8Array> = {};
+      for (const st of slideSteps(timeline.scenes)) images[name(st)] = await stepPng(script, view, st);
+      const { mask, ring } = await bubblePngs(360);
+      setWb(await io.exportWhiteboard(scriptPath, segs, { timeline, images, mask, ring, srt: toSrt(timeline.captions), captions: wbCaptions, remotion }));
+    } catch (e) { setError(String((e as Error).message ?? e)); }
     finally { setProgress(null); }
   };
 
@@ -139,6 +161,18 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
           {result?.captioned && <div className="out"><span className="ext">MP4</span><span className="f">{result.captioned.split(/[\\/]/).pop()}</span><button className="linkbtn" onClick={() => void io?.reveal(result.captioned!)}>Show file</button></div>}
           {result?.captionError && <div className="vsetup err">Burning in captions failed: {result.captionError}</div>}
           {result && <div className="out"><span className="ext">MP4</span><span className="f" title={result.file}>{result.file.split(/[\\/]/).pop()} · {fmt(result.seconds)}</span><button className="linkbtn" onClick={() => void io?.reveal(result.file)}>Show file</button></div>}
+          <span className="label">Whiteboard video</span>
+          <span className="small-note">Slides full screen at each ON SCREEN note, your camera in a round bubble; the cold open stays on camera.</span>
+          <button className="btn primary" onClick={() => void doWhiteboard()} disabled={!segs.length || progress !== null}>
+            {progress !== null ? `Exporting… ${Math.round(progress * 100)}%` : "Make whiteboard video"}
+          </button>
+          <label className="row" htmlFor="wbcap">Captions on the whiteboard video <input type="checkbox" className="switch" id="wbcap" checked={wbCaptions} onChange={e => setWbCaptions(e.target.checked)} /></label>
+          <label className="row" htmlFor="remotion">Also write a Remotion project <input type="checkbox" className="switch" id="remotion" checked={remotion} onChange={e => setRemotion(e.target.checked)} /></label>
+          {wb && <div className="out"><span className="ext">MP4</span><span className="f" title={wb.file}>{wb.file.split(/[\\/]/).pop()} · {fmt(wb.seconds)}</span><button className="linkbtn" onClick={() => void io?.reveal(wb.file)}>Show file</button></div>}
+          {wb && <div className="out"><span className="ext">JSON</span><span className="f" title={wb.timeline}>{wb.timeline.split(/[\\/]/).pop()} · timeline</span><button className="linkbtn" onClick={() => void io?.reveal(wb.timeline)}>Show file</button></div>}
+          {wb?.remotion && <div className="out"><span className="ext">TSX</span><span className="f" title={wb.remotion}>{wb.remotion.split(/[\\/]/).pop()} · Remotion project</span><button className="linkbtn" onClick={() => void io?.reveal(wb.remotion!)}>Show folder</button></div>}
+          {wb?.remotion && <span className="small-note">In that folder: <code>npm install</code>, then <code>npm run studio</code> to edit or <code>npm run render</code>.</span>}
+          {wb?.remotionError && <div className="vsetup err">Remotion project failed: {wb.remotionError}</div>}
           {error && <div className="vsetup err">{error}</div>}
           {dir && <span className="small-note">Takes folder: {dir}</span>}
         </div>

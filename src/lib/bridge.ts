@@ -1,4 +1,5 @@
 import type { Segment, TakeInfo } from "./edit";
+import type { Timeline } from "./storyboard";
 // Access to the Electron main process (see electron/preload.cjs).
 // In a plain browser (npm run web) these fall back to file pickers and in-memory saving.
 
@@ -29,8 +30,21 @@ export interface TakesBridge {
   reveal(file: string): Promise<void>;
   list(scriptPath: string | null): Promise<{ dir: string; takes: (TakeInfo & { error?: string })[] }>;
   exportCut(scriptPath: string | null, segs: Segment[], opts?: { srt?: string; burn?: boolean }): Promise<ExportResult>;
+  exportWhiteboard(scriptPath: string | null, segs: Segment[], opts: WhiteboardOptions): Promise<WhiteboardResult>;
   onExportProgress(cb: (p: number) => void): () => void;
 }
+
+export interface WhiteboardOptions {
+  /** Image paths in the timeline are bare names ("step-01.png"); main places them. */
+  timeline: Timeline;
+  images: Record<string, Uint8Array>;
+  mask: Uint8Array;
+  ring: Uint8Array;
+  srt: string;
+  captions: boolean;
+  remotion: boolean;
+}
+export interface WhiteboardResult { file: string; seconds: number; timeline: string; remotion: string | null; remotionError: string; srt: string | null }
 
 export interface ExportResult { file: string; seconds: number; srt?: string | null; captioned?: string | null; captionError?: string }
 

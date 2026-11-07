@@ -80,6 +80,33 @@ Every export also writes `<script>-cut.srt`: captions with your script's exact w
 marks removed), split into lines of at most 42 characters at punctuation and timed from the cut.
 Tick **Also make a copy with captions burnt in** for `<script>-cut-captioned.mp4`.
 
+## Whiteboard video and Remotion
+
+**Make whiteboard video** turns the cut into the finished lesson, `<script>-whiteboard.mp4`:
+
+- Before the first `[ON SCREEN]` note (the cold open) your camera fills the screen.
+- From then on, the slide for the current step fills the screen and your camera sits in a round
+  bubble in the bottom-right corner. Slides change at the sentence after each note.
+- Captions are burnt in under the slide (untick **Captions on the whiteboard video** to leave them out).
+
+Slides are drawn from your `.excalidraw` frames at 1920x1080 (`<script>-slides/step-NN.png`);
+without slides, the ON SCREEN note text is used as a title card. With audio-only takes there is
+no bubble and the cold open shows the first slide. The cut is reused if it has not changed.
+
+Every run also writes `<script>-timeline.json` (scenes, slide pictures, captions and sentence
+times in cut time), and with **Also write a Remotion project** a ready Remotion project in
+`<script>-remotion/` with the cut, slides and timeline in `public/`:
+
+```
+cd takes/<script>/<script>-remotion
+npm install
+npm run studio   # preview, tweak src/Whiteboard.tsx (bubble size, animations, captions)
+npm run render   # out/whiteboard.mp4
+```
+
+In Remotion the camera shrinks smoothly into the bubble and slides fade in. Exporting again
+refreshes `public/` and keeps your edits in `src/`. The template lives in `remotion-template/`.
+
 ## Script markup
 
 The parser reads the course scripts as they are written today:
@@ -112,12 +139,12 @@ Put your own course files in `samples/` to try them; that folder is not committe
 
 ## Roadmap
 
-1. Prompter (this version)
+1. ✅ Prompter
 2. ✅ Voice follow: whisper.cpp live, scroll follows you, goes back on repeats
-3. Recording: camera, mic and screen, with a marker at each sentence
-4. Re-record one sentence, keep the best take, FFmpeg cuts silences
-5. Captions (SRT, VTT) from the script, timed to your voice
-6. Diagrams: Excalidraw steps live, exported as a Remotion timeline
+3. ✅ Recording: camera and mic, with a marker at each sentence
+4. ✅ Re-record one sentence, keep the best take, FFmpeg cuts silences
+5. ✅ Captions (SRT) from the script, timed to your voice
+6. ✅ Diagrams in the final video: whiteboard MP4, plus a Remotion timeline and project
 
 ## Project layout
 
@@ -126,4 +153,5 @@ electron/   main process and preload (file open/save)
 src/lib/    script parser and file bridge
 src/components/  Prepare, Record, Review screens
 src/sample/ sample script
+remotion-template/  Remotion project copied next to your takes on export
 ```

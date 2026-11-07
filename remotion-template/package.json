@@ -1,0 +1,19 @@
+{
+  "name": "whiteboard-video",
+  "private": true,
+  "description": "Your recorded lesson as a Remotion project: slides, camera bubble and captions from timeline.json.",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render Whiteboard out/whiteboard.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.538",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.538"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "typescript": "5.9.3"
+  }
+}

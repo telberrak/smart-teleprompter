@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("teleprompter", {
     reveal: file => ipcRenderer.invoke("take:reveal", file),
     list: scriptPath => ipcRenderer.invoke("takes:list", scriptPath),
     exportCut: (scriptPath, segs, opts) => ipcRenderer.invoke("export:run", scriptPath, segs, opts),
+    exportWhiteboard: (scriptPath, segs, opts) => ipcRenderer.invoke("export:whiteboard", scriptPath, segs, opts),
     onExportProgress: cb => {
       const h = (_e, p) => cb(p);
       ipcRenderer.on("export:progress", h);

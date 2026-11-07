@@ -5,15 +5,15 @@ import type { ExElement, Frame } from "../lib/excalidraw";
 const gen = rough.generator();
 
 // Excalidraw font ids → local font stacks (1 Virgil and 5 Excalifont are hand-drawn).
-const FONTS: Record<number, string> = {
+export const FONTS: Record<number, string> = {
   1: "Caveat, 'Segoe Print', cursive", 5: "Caveat, 'Segoe Print', cursive",
   2: "Helvetica, Arial, sans-serif", 6: "Nunito, 'Segoe UI', sans-serif",
   3: "'Cascadia Code', Consolas, monospace", 8: "'Comic Sans MS', cursive",
 };
 // Caveat runs narrower than Virgil; scale it up a little so text fills its box.
-const FONT_SCALE: Record<number, number> = { 1: 1.18, 5: 1.18 };
+export const FONT_SCALE: Record<number, number> = { 1: 1.18, 5: 1.18 };
 
-type Path = { d: string; stroke: string; strokeWidth: number; fill?: string };
+export type Path = { d: string; stroke: string; strokeWidth: number; fill?: string };
 
 function opts(e: ExElement) {
   const fill = e.backgroundColor && e.backgroundColor !== "transparent" ? e.backgroundColor : undefined;
@@ -44,7 +44,7 @@ function arrowhead(pts: [number, number][], atEnd: boolean, size: number): [numb
   return [[wing(0.45), tip, wing(-0.45)]];
 }
 
-function shapes(e: ExElement): Path[] {
+export function shapes(e: ExElement): Path[] {
   const o = opts(e);
   const ds = [] as ReturnType<typeof gen.rectangle>[];
   switch (e.type) {

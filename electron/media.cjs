@@ -1,6 +1,6 @@
 // FFmpeg work, main process side: make takes seekable, find silences, export the final cut.
 // FFmpeg itself comes from npm (@ffmpeg-installer/ffmpeg): nothing to install by hand.
-const { ipcMain, protocol, net, BrowserWindow } = require("electron");
+const { app, ipcMain, protocol, net, BrowserWindow } = require("electron");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const fs = require("node:fs");
@@ -127,6 +127,133 @@ async function exportCut(scriptPath, segs, onProgress, opts = {}) {
   return { file: out, seconds: total, srt, captioned, captionError };
 }
 
+const BUBBLE = 360, MARGIN = 56;
+const CAPTION_STYLE = "FontName=Arial,FontSize=13,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=2,Shadow=0,MarginV=12"; // smaller and lower than the cut copy: stays under the slide
+const timeOf = line => { const m = /time=(\d+):(\d+):([\d.]+)/.exec(line); return m ? +m[1] * 3600 + +m[2] * 60 + +m[3] : null; };
+const sameSegs = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+/** The cut for these segments: reuse the last export when nothing changed, else make it. */
+async function ensureCut(scriptPath, segs, onProgress, srt) {
+  const dir = takesDir(scriptPath);
+  const base = scriptPath ? path.basename(scriptPath).replace(/\.[^.]+$/, "") : "cut";
+  const out = path.join(dir, `${base}-cut.mp4`), json = out.replace(/\.mp4$/, ".json");
+  try {
+    const prev = JSON.parse(fs.readFileSync(json, "utf8"));
+    if (fs.existsSync(out) && sameSegs(prev.segments, segs)) {
+      const srtFile = srt ? out.replace(/\.mp4$/, ".srt") : null;
+      if (srtFile) fs.writeFileSync(srtFile, srt);
+      return { file: out, seconds: prev.seconds, srt: srtFile };
+    }
+  } catch { /* no previous cut */ }
+  return exportCut(scriptPath, segs, onProgress, { srt });
+}
+
+/** FFmpeg filter graph: slides full screen, camera full screen in "camera" scenes, round camera bubble over slides. */
+function whiteboardGraph(scenes, { hasCamera, slideInput, maskInput, ringInput, total, srt }) {
+  const parts = [], labels = [];
+  const camScenes = scenes.filter(s => s.kind === "camera");
+  const slideScenes = scenes.filter(s => s.kind === "slide");
+  const bubble = hasCamera && slideScenes.length > 0;
+  const camUses = camScenes.length + (bubble ? 1 : 0);
+  let ci = 0;
+  if (camUses) parts.push(`[0:v]split=${camUses}${Array.from({ length: camUses }, (_, i) => `[c${i}]`).join("")}`);
+  scenes.forEach((s, i) => {
+    const d = (s.end - s.start).toFixed(3);
+    if (s.kind === "camera") parts.push(`[c${ci++}]trim=start=${s.start.toFixed(3)}:end=${s.end.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p,setsar=1[s${i}]`);
+    else parts.push(`[${slideInput(i)}:v]fps=30,scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:white,format=yuv420p,setsar=1,trim=duration=${d},setpts=PTS-STARTPTS[s${i}]`);
+    labels.push(`[s${i}]`);
+  });
+  parts.push(`${labels.join("")}concat=n=${scenes.length}:v=1:a=0[bg]`);
+  let last = "bg";
+  if (bubble) {
+    const on = slideScenes.map(s => `between(t,${s.start.toFixed(3)},${s.end.toFixed(3)})`).join("+");
+    const pos = `x=W-w-${MARGIN}:y=H-h-${MARGIN}`;
+    parts.push(`[c${ci}]crop=ih:ih,scale=${BUBBLE}:${BUBBLE},setsar=1,format=yuva420p[cs]`);
+    parts.push(`[${maskInput}:v]scale=${BUBBLE}:${BUBBLE},format=gray[mk]`);
+    parts.push(`[cs][mk]alphamerge[bub]`);
+    parts.push(`[bg][bub]overlay=${pos}:enable='${on}'[o1]`);
+    parts.push(`[${ringInput}:v]format=rgba[rg]`);
+    parts.push(`[o1][rg]overlay=${pos}:enable='${on}'[o2]`);
+    last = "o2";
+  }
+  parts.push(`[${last}]${srt ? `subtitles=${srt}:force_style='${CAPTION_STYLE}',` : ""}format=yuv420p,trim=duration=${total.toFixed(3)}[v]`);
+  return parts.join(";\n");
+}
+
+/**
+ * The finished whiteboard video (<script>-whiteboard.mp4), and the same storyboard as a
+ * timeline.json + a Remotion project (<script>-remotion) to restyle it in code.
+ * opts: { timeline, images: {name: bytes}, mask, ring, srt, captions, remotion }
+ */
+async function exportWhiteboard(scriptPath, segs, onProgress, opts) {
+  if (!segs.length) throw new Error("Nothing to export yet: record some sentences first.");
+  const dir = takesDir(scriptPath);
+  const base = scriptPath ? path.basename(scriptPath).replace(/\.[^.]+$/, "") : "cut";
+  const tl = opts.timeline;
+  const cut = await ensureCut(scriptPath, segs, p => onProgress(p * 0.4), opts.srt);
+  const cutName = path.basename(cut.file);
+
+  // Slide pictures and the bubble mask, next to the takes.
+  const slidesDir = `${base}-slides`;
+  fs.mkdirSync(path.join(dir, slidesDir), { recursive: true });
+  for (const [name, bytes] of Object.entries(opts.images || {})) fs.writeFileSync(path.join(dir, slidesDir, name), Buffer.from(bytes));
+  fs.writeFileSync(path.join(dir, slidesDir, "bubble-mask.png"), Buffer.from(opts.mask));
+  fs.writeFileSync(path.join(dir, slidesDir, "bubble-ring.png"), Buffer.from(opts.ring));
+
+  // Timeline next to the cut (paths relative to the takes folder).
+  const rel = n => `${slidesDir}/${n}`;
+  const timelineFile = path.join(dir, `${base}-timeline.json`);
+  fs.writeFileSync(timelineFile, JSON.stringify({ ...tl, video: cutName, scenes: tl.scenes.map(s => (s.image ? { ...s, image: rel(s.image) } : s)) }, null, 2));
+
+  // FFmpeg, run inside the takes folder so every path is a plain relative name.
+  const total = tl.seconds;
+  const args = ["-y", "-i", cutName];
+  const slideIdx = {};
+  let n = 1;
+  tl.scenes.forEach((s, i) => {
+    if (s.kind !== "slide") return;
+    args.push("-loop", "1", "-framerate", "30", "-t", (s.end - s.start + 0.1).toFixed(3), "-i", rel(s.image));
+    slideIdx[i] = n++;
+  });
+  const maskInput = n++, ringInput = n++;
+  args.push("-loop", "1", "-framerate", "30", "-t", (total + 0.1).toFixed(3), "-i", rel("bubble-mask.png"));
+  args.push("-loop", "1", "-framerate", "30", "-t", (total + 0.1).toFixed(3), "-i", rel("bubble-ring.png"));
+  const hasCamera = segs.some(s => s.video);
+  const srt = opts.captions && cut.srt ? path.basename(cut.srt) : null;
+  const graph = whiteboardGraph(tl.scenes, { hasCamera, slideInput: i => slideIdx[i], maskInput, ringInput, total, srt });
+  const graphName = ".whiteboard-graph.txt";
+  fs.writeFileSync(path.join(dir, graphName), graph);
+  const outName = `${base}-whiteboard.mp4`;
+  args.push("-filter_complex_script", graphName, "-map", "[v]", "-map", "0:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+    "-c:a", "copy", "-movflags", "+faststart", outName);
+  await ffmpeg(args, line => { const t = timeOf(line); if (t !== null) onProgress(0.4 + 0.6 * Math.min(1, t / total)); }, dir);
+  try { fs.unlinkSync(path.join(dir, graphName)); } catch { /* fine */ }
+
+  let remotion = null, remotionError = "";
+  if (opts.remotion) {
+    try { remotion = writeRemotion(dir, base, tl, cut.file, opts.images); }
+    catch (err) { remotionError = String(err.message || err); }
+  }
+  return { file: path.join(dir, outName), seconds: total, timeline: timelineFile, remotion, remotionError, srt: cut.srt };
+}
+
+/** A small Remotion project with this video's timeline, slides and cut in public/. */
+function writeRemotion(dir, base, tl, cutFile, images) {
+  const proj = path.join(dir, `${base}-remotion`);
+  const template = path.join(app.getAppPath(), "remotion-template");
+  if (!fs.existsSync(path.join(proj, "package.json"))) {
+    fs.cpSync(template, proj, { recursive: true, filter: src => !/node_modules|[\\/]out[\\/]?$/.test(src) });
+  }
+  const pub = path.join(proj, "public");
+  fs.mkdirSync(path.join(pub, "slides"), { recursive: true });
+  for (const [name, bytes] of Object.entries(images || {})) fs.writeFileSync(path.join(pub, "slides", name), Buffer.from(bytes));
+  const video = path.join(pub, "cut.mp4");
+  try { fs.rmSync(video, { force: true }); } catch { /* fine */ }
+  try { fs.linkSync(cutFile, video); } catch { fs.copyFileSync(cutFile, video); }
+  fs.writeFileSync(path.join(pub, "timeline.json"), JSON.stringify({ ...tl, video: "cut.mp4", scenes: tl.scenes.map(s => (s.image ? { ...s, image: `slides/${s.image}` } : s)) }, null, 2));
+  return proj;
+}
+
 // take://media/<encoded absolute path>: lets the page play takes (with seeking) from disk.
 function registerScheme() {
   protocol.registerSchemesAsPrivileged([{ scheme: "take", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
@@ -145,6 +272,10 @@ function register() {
     const win = BrowserWindow.fromWebContents(e.sender);
     return exportCut(scriptPath, segs, p => win?.webContents.send("export:progress", p), opts);
   });
+  ipcMain.handle("export:whiteboard", async (e, scriptPath, segs, opts) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    return exportWhiteboard(scriptPath, segs, p => win?.webContents.send("export:progress", p), opts);
+  });
 }
 
-module.exports = { register, registerScheme, registerProtocol, ffmpeg, listTakes, exportCut, makeSeekable, findSilences };
+module.exports = { register, registerScheme, registerProtocol, ffmpeg, listTakes, exportCut, exportWhiteboard, whiteboardGraph, makeSeekable, findSilences };
