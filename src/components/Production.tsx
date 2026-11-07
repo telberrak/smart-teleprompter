@@ -294,7 +294,24 @@ export function Production({ script, view, scriptPath }: Props) {
   const doSplit = () => { if (canEdit && selected && t > selected.start + 0.2 && t < selected.end - 0.2) setProd(q => split(q, selected.id, t)); };
   const trimLeft = () => { if (canEdit && selected && trimmable(selected)) setProd(q => trim(q, selected.id, "start", t)); };
   const trimRight = () => { if (canEdit && selected && trimmable(selected)) setProd(q => trim(q, selected.id, "end", t)); };
-  const doDelete = () => { if (canEdit && selected && deletable(selected)) { setProd(q => remove(q, selected.id)); setSel(null); } };
+  // Delete: titles, slides, music and sounds go; a camera piece hides the camera there (slides only);
+  // the voice and captions follow your cut, so they say where to change that instead.
+  const [hint, setHint] = useState("");
+  useEffect(() => { if (!hint) return; const id = setTimeout(() => setHint(""), 7000); return () => clearTimeout(id); }, [hint]);
+  const doDelete = () => {
+    if (!selected) return;
+    if (selLocked) { setHint("This lane is locked: unlock it (🔒) to delete."); return; }
+    if (selected.track === "camera") {
+      setProd(q => update(q, selected.id, { layout: "hidden" }));
+      setHint("Camera removed from this part: the slide shows on its own. To bring it back, pick a layout in the Inspector.");
+      return;
+    }
+    if (selected.track === "voice" || selected.track === "captions") {
+      setHint("Your voice and captions follow the cut. To cut out what you say, remove that read in Review (×) or record the sentence again.");
+      return;
+    }
+    if (deletable(selected)) { setProd(q => remove(q, selected.id)); setSel(null); }
+  };
   const doDuplicate = () => {
     if (!canEdit || !selected || !prod) return;
     const next = duplicate(prod, selected.id);
@@ -588,7 +605,7 @@ export function Production({ script, view, scriptPath }: Props) {
           <div className="pd-actions">
             {selLocked && <span className="small-note">This lane is locked: unlock it (🔒 on the timeline) to edit.</span>}
             <button className="btn ghost" onClick={doSplit} disabled={!canEdit || t <= selected.start + 0.2 || t >= selected.end - 0.2}>Split at playhead</button>
-            {deletable(selected) && <button className="btn ghost" onClick={doDelete} disabled={!canEdit}>Delete</button>}
+            {(deletable(selected) || selected.track === "camera") && <button className="btn ghost" onClick={doDelete} disabled={!canEdit}>{selected.track === "camera" ? "Remove camera here" : "Delete"}</button>}
           </div>
         </div>
       </>}
@@ -605,10 +622,11 @@ export function Production({ script, view, scriptPath }: Props) {
         <button className="btn ghost" onClick={trimLeft} disabled={!canEdit || !selected || !trimmable(selected) || t <= selected.start || t >= selected.end} title="Cut off the part of the selected clip before the playhead (Q)">Trim left <kbd>Q</kbd></button>
         <button className="btn ghost" onClick={trimRight} disabled={!canEdit || !selected || !trimmable(selected) || t <= selected.start || t >= selected.end} title="Cut off the part of the selected clip after the playhead (W)">Trim right <kbd>W</kbd></button>
         <button className="btn ghost" onClick={doDuplicate} disabled={!canEdit || !selected || !["titles", "sfx", "music"].includes(selected.track)} title="Copy the selected title or sound right after it (Ctrl+D)">Duplicate</button>
-        <button className="btn ghost" onClick={doDelete} disabled={!canEdit || !selected || !deletable(selected)} title="Delete the selected clip (Delete)">Delete</button>
+        <button className="btn ghost" onClick={doDelete} disabled={!selected} title="Delete the selected clip (Delete). On the camera lane it removes the camera from that piece.">Delete</button>
         <span className="pd-sep" />
         <button className="btn ghost" onClick={marker} title="Add a marker at the playhead, or remove the one there (M)">Marker <kbd>M</kbd></button>
         <button className={"btn ghost" + (magnet ? " on" : "")} aria-pressed={magnet} onClick={() => setMagnet(!magnet)}>Snap to sentences</button>
+        {hint && <span className="pd-hint" role="status">{hint}</span>}
         <span className="pd-spacer" />
         <button className="btn ghost ic" onClick={() => zoomBy(0.8)} title="Zoom out (−)" aria-label="Zoom out">−</button>
         <label className="pd-zoom"><span className="sr">Zoom</span><input type="range" min={1} max={60} step={0.5} value={zoom} onChange={e => { setZoom(+e.target.value); store.set("tp.zoom", +e.target.value); }} /></label>

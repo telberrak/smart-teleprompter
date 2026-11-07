@@ -441,3 +441,4 @@ button.pd-item:hover{border-color:var(--tungsten)}
 .pd-lane.locked .pd-clip{cursor:not-allowed}
 .pd-mark{position:absolute;bottom:2px;width:9px;height:9px;margin-left:-4px;background:#7cc4ff;transform:rotate(45deg);pointer-events:none}
 .pd-mark-line{position:absolute;top:34px;bottom:0;width:1px;background:rgba(124,196,255,.45);pointer-events:none}
+.pd-hint{font-size:12px;color:var(--tungsten);max-width:420px;line-height:1.3}
