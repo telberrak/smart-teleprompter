@@ -2,7 +2,7 @@
 // titles, captions, music and sound effects, with the sound cleaned and levelled.
 //
 // Everything runs in the takes folder so every path FFmpeg sees is a plain relative name.
-const { ipcMain, dialog, BrowserWindow } = require("electron");
+const { ipcMain, dialog, BrowserWindow, shell } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { takesDir } = require("./takes.cjs");
@@ -119,7 +119,7 @@ function productionGraph(p, ix) {
   const lufs = (voice && voice.loudness) || -14;
   // amix divides every input by the input count: undo that so the voice keeps its level.
   const mixed = mix.length > 1 ? `${mix.join("")}amix=inputs=${mix.length}:duration=first:dropout_transition=0,volume=${mix.length}` : `${mix[0]}anull`;
-  parts.push(`${mixed},atrim=0:${f3(total)},loudnorm=I=${lufs}:TP=-1.5:LRA=11,aresample=48000[a]`);
+  parts.push(`${mixed},atrim=0:${f3(total)},loudnorm=I=${lufs}:TP=-1.5:LRA=11,aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo[a]`);
   return parts.join(";\n");
 }
 
@@ -274,6 +274,13 @@ async function exportShort(scriptPath, segs, onProgress, opts) {
   return { file: path.join(dir, name), seconds: +total.toFixed(3) };
 }
 
+/** Everything Production wrote for a script (the recordings and the Review cut are not touched). */
+function productionFiles(scriptPath) {
+  const dir = takesDir(scriptPath), base = baseName(scriptPath);
+  return [`${base}-final.mp4`, `${base}-short.mp4`, `${base}-thumbnail.png`, `${base}-description.txt`, `${base}-production.json`, `${base}-production`, `${base}-short`]
+    .map(f => path.join(dir, f)).filter(f => fs.existsSync(f));
+}
+
 function register() {
   // The cut the preview plays (made, or reused if it has not changed).
   ipcMain.handle("production:cut", async (e, scriptPath, segs) => {
@@ -290,10 +297,16 @@ function register() {
     const win = BrowserWindow.fromWebContents(e.sender);
     return exportProduction(scriptPath, segs, x => win?.webContents.send("export:progress", x), opts);
   });
+  ipcMain.handle("production:files", (_e, scriptPath) => productionFiles(scriptPath));
+  ipcMain.handle("production:delete", async (_e, scriptPath) => {
+    const files = productionFiles(scriptPath);
+    for (const f of files) await shell.trashItem(f);
+    return files;
+  });
   ipcMain.handle("production:short", async (e, scriptPath, segs, opts) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     return exportShort(scriptPath, segs, x => win?.webContents.send("export:progress", x), opts);
   });
 }
 
-module.exports = { register, exportProduction, productionGraph, exportShort, shortGraph };
+module.exports = { register, productionFiles, exportProduction, productionGraph, exportShort, shortGraph };

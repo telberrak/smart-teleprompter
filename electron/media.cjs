@@ -19,7 +19,14 @@ function ffmpeg(args, onLine, cwd) {
       if (onLine) { part += s; const lines = part.split(/\r|\n/); part = lines.pop(); lines.forEach(onLine); }
     });
     p.on("error", reject);
-    p.on("close", code => (code === 0 ? resolve(log) : reject(new Error(`FFmpeg failed (${code}): ${log.split(/\r?\n/).filter(Boolean).slice(-3).join(" | ")}`))));
+    p.on("close", code => {
+      if (code === 0) return resolve(log);
+      // Keep the whole log next to the files, and name the real cause (it is often above the last lines).
+      try { fs.writeFileSync(path.join(cwd || process.cwd(), "ffmpeg-error.log"), `ffmpeg ${args.join(" ")}\n\n${log}`); } catch { /* read-only folder */ }
+      const lines = log.split(/\r?\n/).filter(Boolean);
+      const cause = lines.filter(l => /cannot|no such|invalid|unable|not found|error/i.test(l) && !/^\s*(Stream|Error while|Conversion failed)/.test(l)).slice(0, 2);
+      reject(new Error(`FFmpeg failed (${code}): ${[...new Set([...cause, ...lines.slice(-2)])].join(" | ")}`));
+    });
   });
 }
 
