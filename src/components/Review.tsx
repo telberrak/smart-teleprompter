@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Script } from "../lib/script";
 import { ScreenCard, type SlideView } from "./ScreenCard";
-import { takes as io, mediaUrl } from "../lib/bridge";
+import { takes as io, mediaUrl, type ExportResult } from "../lib/bridge";
+import { cues, toSrt } from "../lib/captions";
 import { buildEdit, timeline, totalSeconds, type Segment, type TakeInfo } from "../lib/edit";
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -22,7 +23,8 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
   });
   const [sel, setSel] = useState<number | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
-  const [result, setResult] = useState<{ file: string; seconds: number } | null>(null);
+  const [result, setResult] = useState<ExportResult | null>(null);
+  const [burn, setBurn] = useState(() => { try { return localStorage.getItem("tp.burn") === "1"; } catch { return false; } });
   const [error, setError] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const queue = useRef<{ segs: Segment[]; i: number } | null>(null);
@@ -69,7 +71,9 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
   const doExport = async () => {
     if (!io) return;
     setError(""); setResult(null); setProgress(0);
-    try { setResult(await io.exportCut(scriptPath, segs)); }
+    try { localStorage.setItem("tp.burn", burn ? "1" : "0"); } catch { /* private window */ }
+    const srt = toSrt(cues(segs, n => S[n - 1]?.spoken ?? ""));
+    try { setResult(await io.exportCut(scriptPath, segs, { srt, burn })); }
     catch (e) { setError(String((e as Error).message ?? e)); }
     finally { setProgress(null); }
   };
@@ -130,6 +134,10 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
             {progress !== null ? `Exporting… ${Math.round(progress * 100)}%` : `Export MP4 (${segs.length} sentences)`}
           </button>
           {progress !== null && <div className="vsetup"><div className="bar"><b style={{ width: `${Math.round(progress * 100)}%` }} /></div></div>}
+          <label className="row" htmlFor="burn">Also make a copy with captions burnt in <input type="checkbox" className="switch" id="burn" checked={burn} onChange={e => setBurn(e.target.checked)} /></label>
+          {result?.srt && <div className="out"><span className="ext">SRT</span><span className="f">{result.srt.split(/[\\/]/).pop()} · captions from your script</span><button className="linkbtn" onClick={() => void io?.reveal(result.srt!)}>Show file</button></div>}
+          {result?.captioned && <div className="out"><span className="ext">MP4</span><span className="f">{result.captioned.split(/[\\/]/).pop()}</span><button className="linkbtn" onClick={() => void io?.reveal(result.captioned!)}>Show file</button></div>}
+          {result?.captionError && <div className="vsetup err">Burning in captions failed: {result.captionError}</div>}
           {result && <div className="out"><span className="ext">MP4</span><span className="f" title={result.file}>{result.file.split(/[\\/]/).pop()} · {fmt(result.seconds)}</span><button className="linkbtn" onClick={() => void io?.reveal(result.file)}>Show file</button></div>}
           {error && <div className="vsetup err">{error}</div>}
           {dir && <span className="small-note">Takes folder: {dir}</span>}

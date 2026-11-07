@@ -28,9 +28,11 @@ export interface TakesBridge {
   end(id: number, meta: unknown): Promise<{ file: string; json: string; bytes: number } | null>;
   reveal(file: string): Promise<void>;
   list(scriptPath: string | null): Promise<{ dir: string; takes: (TakeInfo & { error?: string })[] }>;
-  exportCut(scriptPath: string | null, segs: Segment[]): Promise<{ file: string; seconds: number }>;
+  exportCut(scriptPath: string | null, segs: Segment[], opts?: { srt?: string; burn?: boolean }): Promise<ExportResult>;
   onExportProgress(cb: (p: number) => void): () => void;
 }
+
+export interface ExportResult { file: string; seconds: number; srt?: string | null; captioned?: string | null; captionError?: string }
 
 /** A file on disk as a URL the page can play (served by the take:// protocol). */
 export const mediaUrl = (file: string) => "take://media/" + encodeURIComponent(file);

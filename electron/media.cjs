@@ -10,9 +10,9 @@ const { takesDir } = require("./takes.cjs");
 const ffmpegPath = () => require("@ffmpeg-installer/ffmpeg").path.replace("app.asar", "app.asar.unpacked");
 
 /** Run FFmpeg; resolves with its log (stderr). onLine gets each log line as it comes. */
-function ffmpeg(args, onLine) {
+function ffmpeg(args, onLine, cwd) {
   return new Promise((resolve, reject) => {
-    const p = spawn(ffmpegPath(), ["-hide_banner", "-nostdin", ...args], { windowsHide: true });
+    const p = spawn(ffmpegPath(), ["-hide_banner", "-nostdin", ...args], { windowsHide: true, cwd });
     let log = "", part = "";
     p.stderr.on("data", d => {
       const s = d.toString(); log += s;
@@ -78,7 +78,7 @@ async function listTakes(scriptPath) {
 }
 
 /** One MP4 from the chosen segments, in order, 1080p30, H.264 + AAC. */
-async function exportCut(scriptPath, segs, onProgress) {
+async function exportCut(scriptPath, segs, onProgress, opts = {}) {
   if (!segs.length) throw new Error("Nothing to export yet: record some sentences first.");
   const dir = takesDir(scriptPath);
   const base = scriptPath ? path.basename(scriptPath).replace(/\.[^.]+$/, "") : "cut";
@@ -108,7 +108,23 @@ async function exportCut(scriptPath, segs, onProgress) {
   });
   try { fs.unlinkSync(graphFile); } catch { /* fine */ }
   fs.writeFileSync(out.replace(/\.mp4$/, ".json"), JSON.stringify({ video: path.basename(out), seconds: +total.toFixed(2), segments: segs }, null, 2));
-  return { file: out, seconds: total };
+  // Captions: an .srt next to the video, and optionally a copy with them burnt in.
+  let srt = null, captioned = null, captionError = "";
+  if (opts.srt) {
+    srt = out.replace(/\.mp4$/, ".srt");
+    fs.writeFileSync(srt, opts.srt);
+    if (opts.burn) {
+      captioned = out.replace(/\.mp4$/, "-captioned.mp4");
+      const style = "FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=2,Shadow=0,MarginV=40";
+      try {
+        // Run inside the folder so the subtitles filter gets a plain file name (no Windows drive colon to escape).
+        await ffmpeg(["-y", "-i", path.basename(out), "-vf", `subtitles=${path.basename(srt)}:force_style='${style}'`,
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "copy", "-movflags", "+faststart", path.basename(captioned)],
+          line => { const m = /time=(\d+):(\d+):([\d.]+)/.exec(line); if (m) onProgress(Math.min(1, (+m[1] * 3600 + +m[2] * 60 + +m[3]) / total)); }, dir);
+      } catch (err) { captioned = null; captionError = String(err.message || err); }
+    }
+  }
+  return { file: out, seconds: total, srt, captioned, captionError };
 }
 
 // take://media/<encoded absolute path>: lets the page play takes (with seeking) from disk.
@@ -125,9 +141,9 @@ function registerProtocol() {
 
 function register() {
   ipcMain.handle("takes:list", (_e, scriptPath) => listTakes(scriptPath));
-  ipcMain.handle("export:run", async (e, scriptPath, segs) => {
+  ipcMain.handle("export:run", async (e, scriptPath, segs, opts) => {
     const win = BrowserWindow.fromWebContents(e.sender);
-    return exportCut(scriptPath, segs, p => win?.webContents.send("export:progress", p));
+    return exportCut(scriptPath, segs, p => win?.webContents.send("export:progress", p), opts);
   });
 }
 
