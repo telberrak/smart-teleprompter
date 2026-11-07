@@ -168,7 +168,8 @@ export function Record({ script, view, startAt, onEdit }: Props) {
         const pos = curRef.current.w;
         // Tell whisper what is coming: it then spells your words the way the script does.
         const prompt = words.raw.slice(Math.max(0, pos - 15), pos + 35).join(" ");
-        const res = await v.transcribe(m.last(4), prompt);
+        // Wait at most 10 s for an answer so a stuck pass can never stop the listening loop.
+        const res = await Promise.race([v.transcribe(m.last(4), prompt), new Promise<null>(r => setTimeout(() => r(null), 10000))]);
         if (stopped || !res) return;
         if (res.error) { toast(`Speech engine: ${res.error}`); return; }
         setHeard(res.text.trim());

@@ -106,24 +106,31 @@ async function setup() {
 }
 
 /** pcm: 16-bit mono 16 kHz samples. prompt: the script text around the speaker, to bias recognition. */
+let busySince = 0;
+let skipped = 0;
 async function transcribe(pcm, prompt) {
   if (!ctx) { log("transcribe: no model loaded"); return null; }
-  if (busy) return null;
-  busy = true;
+  if (busy) {
+    if (++skipped % 20 === 0) log("still busy with the previous pass", { forMs: Date.now() - busySince });
+    return null;
+  }
+  const buf = pcm instanceof ArrayBuffer ? pcm : pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength);
+  const samples = new Int16Array(buf);
+  if (samples.length < 16000) return { text: "", ms: 0 }; // under 1 s: nothing whisper can use
+  busy = true; busySince = Date.now(); skipped = 0;
+  const t0 = Date.now();
+  let peak = 0; for (let i = 0; i < samples.length; i += 8) peak = Math.max(peak, Math.abs(samples[i]));
   try {
-    const buf = pcm instanceof ArrayBuffer ? pcm : pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength);
-    const t0 = Date.now();
     const { promise, stop } = ctx.transcribeData(buf, {
       language: "en",
       temperature: 0,
+      temperatureInc: 0, // no slow retries at higher temperatures: the next pass comes soon anyway
       maxThreads: Math.max(1, Math.min(4, os.cpus().length - 1)),
       prompt: prompt || undefined,
     });
-    // Never let one slow pass block the next ones: a 4 s window should take well under a second.
-    const guard = setTimeout(() => { void stop(); }, 5000);
+    // A 4 s window should take well under a second. If a pass runs away, ask it to stop.
+    const guard = setTimeout(() => { log("pass too slow, stopping it", { secs: samples.length / 16000 }); void stop(); }, 6000);
     const r = await promise.finally(() => clearTimeout(guard));
-    const samples = new Int16Array(buf);
-    let peak = 0; for (let i = 0; i < samples.length; i += 8) peak = Math.max(peak, Math.abs(samples[i]));
     log("heard", { ms: Date.now() - t0, secs: +(samples.length / 16000).toFixed(2), peak, text: r.result });
     return { text: r.result || "", ms: Date.now() - t0 };
   } catch (err) {
