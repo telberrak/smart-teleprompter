@@ -41,14 +41,28 @@ Other commands:
 
 ## Voice following
 
-On the Record screen, set **Voice → Microphone** in the Prompter panel. The first time, click
-**Download speech model**: it fetches `ggml-base.en.bin` (148 MB) from Hugging Face into the app's
-data folder (`%APPDATA%\smart-teleprompter\models`). After that everything runs offline. If you
-already have a whisper.cpp model, use **Use a model file…** instead.
+On the Record screen, set **Voice → Microphone** in the Prompter panel. Pick a **Speech model**:
 
-Press Space and start talking. Every ~0.4 s the app transcribes the last 4 seconds and lines the
+| Model | Size | Use it when |
+| --- | --- | --- |
+| Tiny | 75 MB | Fastest. Slow computers, or you want the scroll as tight as possible |
+| Base | 142 MB | Default: fast and accurate |
+| Small | 466 MB | Most accurate; needs a good graphics card to keep up |
+| Your own file… | | Any whisper.cpp `ggml-*.bin` you already have |
+
+A model downloads from Hugging Face the first time you pick it, into the app's data folder
+(`%APPDATA%\smart-teleprompter\models`). After that everything runs offline. Switching loads the
+model and measures it, so the panel shows the real seconds per listen on your computer.
+
+**Fast listening** (on by default) tells whisper to read only the 4 seconds it is given instead of
+its usual fixed 30-second window, which makes each listen several times faster. Turn it off if
+words come out wrong with your model.
+
+Press Space and start talking. The app transcribes the last 4 seconds again and again and lines the
 words up with the script, so the text follows you; misheard words, ad-libs and pauses are ignored, and
-re-reading an earlier line takes you back there. **Simulated** keeps the old steady-pace demo.
+re-reading an earlier line takes you back there. Because each listen describes where you were when it
+started, the scroll also moves on by what you said meanwhile, at your measured pace (up to 6 words,
+never into the next sentence). **Simulated** keeps the old steady-pace demo.
 
 The engine is the prebuilt whisper.cpp addon `@fugood/node-whisper-win32-x64` (installed by
 `npm install`, no compiler needed).

@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld("teleprompter", {
     status: () => ipcRenderer.invoke("voice:status"),
     setup: () => ipcRenderer.invoke("voice:setup"),
     pickModel: () => ipcRenderer.invoke("voice:pickModel"),
+    choose: id => ipcRenderer.invoke("voice:choose", id),
+    setFast: on => ipcRenderer.invoke("voice:fast", on),
     log: (...parts) => ipcRenderer.invoke("voice:log", ...parts),
     transcribe: (pcm, prompt) => ipcRenderer.invoke("voice:transcribe", pcm, prompt),
     onState: cb => {

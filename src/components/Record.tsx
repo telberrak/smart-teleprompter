@@ -165,6 +165,8 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
     const v = voice;
     let m: Mic | null = null, stopped = false, inflight = false;
     const hist: { t: number; w: number }[] = [];
+    // Where whisper last placed you. The scroll may sit a few words further on (see below).
+    let lastHit: number | null = null, rate = 0;
     startMic(micId || undefined).then(x => { if (stopped) x.stop(); else { m = x; void v.log("mic open", x.info); } })
       .catch(err => { void v.log("mic error", String(err?.message ?? err)); toast(`Microphone not available: ${err?.message ?? err}`); setLive(false); });
     const diag = setInterval(() => { if (m) void v.log("mic", { peak: m.peak(), quietFor: +m.quietFor().toFixed(1), pos: curRef.current.w }); }, 2000);
@@ -185,25 +187,38 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
         if (stopped || !res) return;
         if (res.error) { toast(`Speech engine: ${res.error}`); return; }
         setHeard(res.text.trim());
-        const hit = align(words.norm, curRef.current.w, heardWords(res.text));
-        void v.log("align", { from: curRef.current.w, to: hit?.pos ?? null, score: hit ? +hit.score.toFixed(1) : null, near: words.raw.slice(Math.max(0, curRef.current.w - 2), curRef.current.w + 8).join(" ") });
-        if (hit && hit.pos !== curRef.current.w) {
-          setCur({ w: hit.pos, s: sentenceOf(hit.pos) });
+        const here = curRef.current.w;
+        const from = lastHit !== null && Math.abs(here - lastHit) <= 8 ? lastHit : here; // a manual jump resets it
+        const hit = align(words.norm, from, heardWords(res.text));
+        if (hit) {
           const now = performance.now();
-          hist.push({ t: now, w: hit.pos });
-          while (hist.length > 2 && now - hist[0].t > 10000) hist.shift();
-          if (hist.length > 1) {
-            const dt = (now - hist[0].t) / 60000, dw = hit.pos - hist[0].w;
-            if (dt > 0.03 && dw > 0) setWpm(Math.round(dw / dt));
+          if (hit.pos !== lastHit) {
+            hist.push({ t: now, w: hit.pos });
+            while (hist.length > 2 && now - hist[0].t > 10000) hist.shift();
+            if (hist.length > 1) {
+              const dt = (now - hist[0].t) / 60000, dw = hit.pos - hist[0].w;
+              if (dt > 0.03 && dw > 0) { rate = Math.round(dw / dt); setWpm(rate); }
+            }
           }
-        }
+          lastHit = hit.pos;
+          // The words heard end where you were when this listen started; you have kept talking
+          // since. Move on by what you say in that time (at your pace), up to 6 words, never past
+          // the end of the sentence (sentence changes stay tied to what was really heard).
+          const s0 = sentenceOf(hit.pos);
+          const end = (offsets.first[s0 + 1] ?? offsets.total) - 1;
+          const ahead = rate > 0 ? Math.min(6, Math.round((rate / 60) * (res.ms / 1000 + 0.2))) : 0;
+          let target = Math.min(end, hit.pos + ahead);
+          if (hit.pos >= from) target = Math.max(target, sentenceOf(here) === s0 ? here : target); // no small steps back
+          void v.log("align", { from, to: hit.pos, shown: target, score: +hit.score.toFixed(1), near: words.raw.slice(Math.max(0, hit.pos - 2), hit.pos + 8).join(" ") });
+          if (target !== here) setCur({ w: target, s: sentenceOf(target) });
+        } else void v.log("align", { from, to: null, near: words.raw.slice(Math.max(0, from - 2), from + 8).join(" ") });
       } finally { inflight = false; }
     }, 350);
     return () => {
       stopped = true; clearInterval(meter); clearInterval(diag); clearInterval(listen); m?.stop();
       setLevels(Array(16).fill(0)); setWpm(0);
     };
-  }, [live, micReady, editing, words, sentenceOf, toast, micId]);
+  }, [live, micReady, editing, words, sentenceOf, offsets, toast, micId]);
 
   // Camera preview (and the video for takes). camId "off" = audio-only takes.
   useEffect(() => {
@@ -382,7 +397,8 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
                 {mics.filter(d => d.deviceId && d.deviceId !== "default").map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || "Microphone"}</option>)}
               </select>
             </label>}
-            {mic && vs && <VoiceSetup vs={vs} onSetup={() => voice && void voice.setup().then(setVs)} onPick={() => voice && void voice.pickModel().then(setVs)} />}
+            {mic && vs && <VoiceSetup vs={vs} busy={live} onSetup={() => voice && void voice.setup().then(setVs)} onPick={() => voice && void voice.pickModel().then(setVs)}
+              onChoose={id => voice && void voice.choose(id).then(setVs)} onFast={on => voice && void voice.setFast(on).then(setVs)} />}
             <label className="row" htmlFor="mirror">Mirror for glass <input type="checkbox" className="switch" id="mirror" checked={mirror} onChange={e => setMirror(e.target.checked)} /></label>
             <label className="row" htmlFor="fs">Text size <input type="range" id="fs" min={wb ? 22 : 30} max={wb ? 48 : 64} value={fs} onChange={e => setFs(+e.target.value)} /></label>
             <div className="row">Shortcuts <span><kbd>Space</kbd> <kbd>←</kbd> <kbd>E</kbd> <kbd>M</kbd> <kbd>W</kbd></span></div>
@@ -420,26 +436,47 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
 }
 
 /** First-run setup for the speech model, and its status afterwards. */
-function VoiceSetup({ vs, onSetup, onPick }: { vs: VoiceStatus; onSetup: () => void; onPick: () => void }) {
+interface SetupProps { vs: VoiceStatus; busy: boolean; onSetup: () => void; onPick: () => void; onChoose: (id: string) => void; onFast: (on: boolean) => void }
+
+/** Speech model and speed: which model listens, fast listening on/off, download/load state. */
+function VoiceSetup({ vs, busy, onSetup, onPick, onChoose, onFast }: SetupProps) {
   if (!vs.engine) return <div className="vsetup err">{vs.engineError}</div>;
+  if (vs.phase === "downloading" || vs.phase === "loading")
+    return <div className="vsetup"><span>{vs.message}</span><div className="bar"><b style={{ width: `${Math.round(vs.progress * 100)}%` }} /></div></div>;
+  const models = vs.models ?? [];
+  const cur = models.find(m => m.id === vs.modelId);
+  const picker = (
+    <div className="vs-model">
+      <label className="row" htmlFor="vsmodel">Speech model
+        <select id="vsmodel" className="micsel" value={vs.modelId} disabled={busy}
+          onChange={e => (e.target.value === "custom" ? onPick() : onChoose(e.target.value))}>
+          {models.map(m => <option key={m.id} value={m.id}>{m.label} · {m.mb} MB{m.downloaded ? "" : " · download"}</option>)}
+          <option value="custom">{vs.modelId === "custom" ? `Your file: ${vs.modelName}` : "Your own file…"}</option>
+        </select>
+      </label>
+      {cur && <span className="small-note">{cur.label}: {cur.note}.</span>}
+      <label className="row" htmlFor="vsfast" title="whisper reads only the last 4 s instead of a fixed 30 s window: several times faster">
+        Fast listening <input type="checkbox" className="switch" id="vsfast" checked={vs.fast} disabled={busy} onChange={e => onFast(e.target.checked)} />
+      </label>
+    </div>
+  );
   if (vs.phase === "ready") {
     const secs = vs.passMs / 1000;
     return (
       <div className={"vsetup" + (secs > 1.5 ? "" : " ok")}>
         <span className={secs > 1.5 ? "" : "ok"}>● Listening on the {vs.device} · {vs.modelName} · {secs.toFixed(1)} s per listen</span>
-        {secs > 1.5 && <span className="err">This computer is slow for live listening, so the text will lag behind your voice by about {Math.ceil(secs)} s.</span>}
+        {secs > 1.5 && <span className="err">This is slow for live listening, so the text will lag behind your voice by about {Math.ceil(secs)} s. {vs.fast ? "Try the Tiny model." : "Turn on Fast listening."}</span>}
+        {picker}
       </div>
     );
   }
-  if (vs.phase === "downloading" || vs.phase === "loading")
-    return <div className="vsetup"><span>{vs.message}</span><div className="bar"><b style={{ width: `${Math.round(vs.progress * 100)}%` }} /></div></div>;
   return (
     <div className="vsetup">
       {vs.phase === "error" && <span className="err">{vs.message}</span>}
-      {!vs.model && <span>Following your voice needs a speech model (148 MB, downloaded once, then fully offline).</span>}
+      {!vs.model && cur && <span>Following your voice needs a speech model ({cur.label}, {cur.mb} MB, downloaded once, then fully offline).</span>}
+      {picker}
       <div className="vs-btns">
         <button className="btn" onClick={onSetup}>{vs.model ? "Load the speech model" : "Download speech model"}</button>
-        <button className="btn ghost" onClick={onPick} title="Use a ggml-*.bin file you already have">Use a model file…</button>
       </div>
     </div>
   );

@@ -5,11 +5,14 @@ const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
 
-const MODEL = {
-  file: "ggml-base.en.bin",
-  url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
-  minBytes: 100e6, // the real file is ~148 MB; anything smaller is a broken download
+// Speech models (whisper.cpp ggml, English only), downloaded on demand. Smaller = faster, larger = more accurate.
+const HF = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
+const MODELS = {
+  "tiny.en": { file: "ggml-tiny.en.bin", mb: 75, minBytes: 60e6, label: "Tiny", note: "fastest, a few more mistakes" },
+  "base.en": { file: "ggml-base.en.bin", mb: 142, minBytes: 100e6, label: "Base", note: "fast and accurate (default)" },
+  "small.en": { file: "ggml-small.en.bin", mb: 466, minBytes: 400e6, label: "Small", note: "most accurate, needs a good graphics card" },
 };
+const DEFAULT_MODEL = "base.en";
 
 const modelDir = () => path.join(app.getPath("userData"), "models");
 const settingsFile = () => path.join(app.getPath("userData"), "voice.json");
@@ -28,12 +31,21 @@ function log(...parts) {
 function readSettings() { try { return JSON.parse(fs.readFileSync(settingsFile(), "utf8")); } catch { return {}; } }
 function writeSettings(s) { fs.mkdirSync(path.dirname(settingsFile()), { recursive: true }); fs.writeFileSync(settingsFile(), JSON.stringify(s, null, 2)); }
 
-function modelPath() {
-  const custom = readSettings().modelPath;
-  if (custom && fs.existsSync(custom)) return custom;
-  return path.join(modelDir(), MODEL.file);
+/** Chosen model: one of MODELS, or "custom" (a file picked by hand). Older settings with only modelPath count as custom. */
+function chosen() {
+  const s = readSettings();
+  if (s.model === "custom" || (!s.model && s.modelPath)) return s.modelPath && fs.existsSync(s.modelPath) ? "custom" : DEFAULT_MODEL;
+  return MODELS[s.model] ? s.model : DEFAULT_MODEL;
 }
-const haveModel = () => { try { return fs.statSync(modelPath()).size > 10e6; } catch { return false; } };
+/** Fast listening: whisper encodes only as much audio as we send instead of a fixed 30 s. */
+const fast = () => readSettings().fast !== false;
+const fileOf = id => path.join(modelDir(), MODELS[id].file);
+function modelPath() {
+  const id = chosen();
+  return id === "custom" ? readSettings().modelPath : fileOf(id);
+}
+const sizeOk = (file, min) => { try { return fs.statSync(file).size > min; } catch { return false; } };
+const haveModel = () => sizeOk(modelPath(), 10e6);
 
 // Engine builds to try, fastest first: the Vulkan build runs on the graphics card (Windows, Linux),
 // the plain build on the CPU.
@@ -68,26 +80,30 @@ function status() {
     model: haveModel(),
     device, passMs,
     modelPath: modelPath(),
-    modelName: path.basename(modelPath()),
+    modelName: path.basename(modelPath() || ""),
+    modelId: chosen(),
+    models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label, mb: m.mb, note: m.note, downloaded: sizeOk(fileOf(id), 10e6) })),
+    fast: fast(),
     ...state,
     phase: ctx && state.phase !== "error" ? "ready" : state.phase,
   };
 }
 
-async function download() {
-  const dest = path.join(modelDir(), MODEL.file);
+async function download(id) {
+  const MODEL = MODELS[id];
+  const dest = fileOf(id);
   fs.mkdirSync(modelDir(), { recursive: true });
   const part = dest + ".part";
-  set("downloading", 0, "Downloading the speech model…");
-  const res = await fetch(MODEL.url);
+  set("downloading", 0, `Downloading the ${MODEL.label} speech model…`);
+  const res = await fetch(HF + MODEL.file);
   if (!res.ok || !res.body) throw new Error(`Download failed (HTTP ${res.status})`);
-  const total = Number(res.headers.get("content-length")) || 148e6;
+  const total = Number(res.headers.get("content-length")) || MODEL.mb * 1e6;
   const out = fs.createWriteStream(part);
   let got = 0, lastSent = 0;
   for await (const chunk of res.body) {
     got += chunk.length;
     if (!out.write(chunk)) await new Promise(r => out.once("drain", r));
-    if (got - lastSent > 2e6) { lastSent = got; set("downloading", got / total, `Downloading the speech model… ${Math.round(got / 1e6)} of ${Math.round(total / 1e6)} MB`); }
+    if (got - lastSent > 2e6) { lastSent = got; set("downloading", got / total, `Downloading the ${MODEL.label} speech model… ${Math.round(got / 1e6)} of ${Math.round(total / 1e6)} MB`); }
   }
   await new Promise((resolve, reject) => out.end(err => (err ? reject(err) : resolve())));
   if (fs.statSync(part).size < MODEL.minBytes) throw new Error("The download was cut short. Please try again.");
@@ -118,13 +134,13 @@ async function load() {
       // One timed pass: whisper always encodes 30 s of audio, so this is the cost of every pass.
       set("loading", 0.5, `Measuring speed on the ${c.label}…`);
       // The first pass also warms up the engine (GPU shaders), so time the second one.
-      const quiet = () => next.transcribeData(new Int16Array(16000 * 2).buffer, { language: "en", temperature: 0, temperatureInc: 0, maxThreads: threads() }).promise;
+      const quiet = () => next.transcribeData(new Int16Array(16000 * LISTEN_SECS).buffer, { language: "en", temperature: 0, temperatureInc: 0, maxThreads: threads(), ...ctxFor(16000 * LISTEN_SECS) }).promise;
       await quiet();
       const t0 = Date.now();
       await quiet();
       passMs = Date.now() - t0;
       loading = false;
-      log("speed", { device: c.label, passMs });
+      log("speed", { device: c.label, passMs, model: path.basename(p), fast: fast() });
       ctx = next; ctxPath = p; device = c.label;
       set("ready", 1, "");
       return;
@@ -138,9 +154,19 @@ async function load() {
 }
 const threads = () => Math.max(1, Math.min(8, os.cpus().length - 1));
 
+// whisper.cpp's encoder looks at 1500 positions (30 s, 20 ms each) unless told otherwise.
+// A listen is 4 s, so in fast mode we ask for just enough positions (rounded up to 64, plus
+// a margin): the encoder then does a fraction of the work. Off = the full 30 s, as before.
+const LISTEN_SECS = 4;
+const ctxFor = samples => (fast() ? { audioCtx: Math.min(1500, Math.ceil((samples / 16000) * 50 / 64 + 1) * 64) } : {});
+
 async function setup() {
   try {
-    if (!haveModel()) await download();
+    const id = chosen();
+    if (!haveModel()) {
+      if (id === "custom") throw new Error("The model file you picked is missing. Choose it again.");
+      await download(id);
+    }
     await load();
   } catch (err) {
     ctx = null;
@@ -171,6 +197,7 @@ async function transcribe(pcm, prompt) {
       temperatureInc: 0, // no slow retries at higher temperatures: the next pass comes soon anyway
       maxThreads: threads(),
       prompt: prompt || undefined,
+      ...ctxFor(samples.length),
     });
     // A 4 s window should take well under a second. If a pass runs away, ask it to stop.
     const guard = setTimeout(() => { log("pass too slow, stopping it", { secs: samples.length / 16000 }); void stop(); }, 30000);
@@ -198,7 +225,19 @@ function register() {
       properties: ["openFile"],
     });
     if (res.canceled || !res.filePaths[0]) return status();
-    writeSettings({ ...readSettings(), modelPath: res.filePaths[0] });
+    writeSettings({ ...readSettings(), model: "custom", modelPath: res.filePaths[0] });
+    return setup();
+  });
+  // Pick one of the built-in models: downloads it if needed, then loads it and measures its speed.
+  ipcMain.handle("voice:choose", (_e, id) => {
+    if (!MODELS[id]) return status();
+    writeSettings({ ...readSettings(), model: id });
+    return setup();
+  });
+  // Fast listening on/off: reload so the speed is measured again.
+  ipcMain.handle("voice:fast", async (_e, on) => {
+    writeSettings({ ...readSettings(), fast: !!on });
+    if (ctx) { try { await ctx.release(); } catch { /* gone */ } ctx = null; ctxPath = null; }
     return setup();
   });
 }

@@ -10,6 +10,10 @@ export interface VoiceStatus {
   engine: boolean; engineError: string;
   model: boolean; modelPath: string; modelName: string;
   device: string; passMs: number;
+  /** Chosen model id ("tiny.en", "base.en", "small.en" or "custom"), the built-in ones, and fast listening. */
+  modelId: string;
+  models: { id: string; label: string; mb: number; note: string; downloaded: boolean }[];
+  fast: boolean;
   phase: "idle" | "downloading" | "loading" | "ready" | "error";
   progress: number; message: string;
 }
@@ -18,6 +22,8 @@ export interface VoiceBridge {
   status(): Promise<VoiceStatus>;
   setup(): Promise<VoiceStatus>;
   pickModel(): Promise<VoiceStatus>;
+  choose(id: string): Promise<VoiceStatus>;
+  setFast(on: boolean): Promise<VoiceStatus>;
   log(...parts: unknown[]): Promise<void>;
   transcribe(pcm: Int16Array, prompt: string): Promise<Heard | null>;
   onState(cb: (s: VoiceStatus) => void): () => void;
