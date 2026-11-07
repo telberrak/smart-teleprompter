@@ -57,6 +57,7 @@ export function Production({ script, view, scriptPath }: Props) {
   const [brand, setBrandRaw] = useState<Brand>(() => ({ ...DEFAULT_BRAND, ...store.get<Partial<Brand>>("tp.brand", {}) }));
   const [prod, setProdRaw] = useState<Prod | null>(null);
   const [sel, setSel] = useState<string | null>(null);
+  const [selGap, setSelGap] = useState<number | null>(null);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [cut, setCut] = useState<{ file: string; seconds: number; version?: number } | null>(null);
@@ -202,6 +203,8 @@ export function Production({ script, view, scriptPath }: Props) {
   // Playback clock: the cut video drives the time; during a pause the picture holds and a clock runs on.
   const pauseRef = useRef<{ start: number; end: number; clock: number } | null>(null);
   const lastC = useRef(0);
+  // The picture is 30 fps: redrawing the screen more often (60–144 Hz monitors) only costs time.
+  const shown = useRef(-1);
   const prodNow = useRef<Prod | null>(null);
   prodNow.current = prod;
   useEffect(() => {
@@ -215,7 +218,7 @@ export function Production({ script, view, scriptPath }: Props) {
           const x = g.start + (performance.now() - g.clock) / 1000;
           if (x >= p.seconds) { setT(p.seconds); pauseRef.current = null; musicRef.current?.pause(); setPlaying(false); return; }
           if (x >= g.end) { pauseRef.current = null; void v.play(); }
-          setT(Math.min(x, g.end));
+          if (Math.abs(x - shown.current) >= 1 / 31) { shown.current = x; setT(Math.min(x, g.end)); }
         } else {
           const c = v.currentTime;
           // Reaching a pause (or the end of the cut with room after it): hold the frame.
@@ -226,7 +229,7 @@ export function Production({ script, view, scriptPath }: Props) {
             pauseRef.current = { start: span.start, end: span.end, clock: performance.now() };
             setT(span.start);
           } else if (v.ended || tlOf(p, c) >= p.seconds) { setT(p.seconds); musicRef.current?.pause(); setPlaying(false); return; }
-          else setT(tlOf(p, c));
+          else { const x = tlOf(p, c); if (Math.abs(x - shown.current) >= 1 / 31) { shown.current = x; setT(x); } }
         }
       }
       raf = requestAnimationFrame(tick);
@@ -380,6 +383,34 @@ export function Production({ script, view, scriptPath }: Props) {
     setSel(null); setSelGap(null);
   };
 
+  // The lanes hold hundreds of clips: built only when the timeline changes, not on every frame
+  // of playback (re-rendering them 60 times a second made the preview stutter).
+  const H = useRef({ laneClick, onClipDown, onClipMove, onClipUp, onEdgeDown });
+  H.current = { laneClick, onClipDown, onClipMove, onClipUp, onEdgeDown };
+  const lanes = useMemo(() => !prod ? null : (<>
+            {TRACKS.map(tr => (
+              <div key={tr.id} className={"pd-lane" + (isOff(prod, tr.id) ? " off" : "") + (isLocked(prod, tr.id) ? " locked" : "")} onClick={e => H.current.laneClick(e)}>
+                {clipsOn(prod, tr.id).map(c => (
+                  <button key={c.id} className={"pd-clip " + CLIP_COLOURS[tr.id] + (sel === c.id ? " sel" : "") + (c.track === "titles" || c.track === "sfx" || c.track === "music" ? " movable" : "")}
+                    style={{ left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={clipLabel(c)}
+                    onPointerDown={e => H.current.onClipDown(e, c)} onPointerMove={e => H.current.onClipMove(e)} onPointerUp={() => H.current.onClipUp()}>
+                    {clipLabel(c)}
+                    {trimmable(c) && !isLocked(prod, c.track) && (c.end - c.start) * zoom > 14 && <>
+                      <span className="pd-trim l" title="Drag to change where it starts" onPointerDown={e => H.current.onEdgeDown(e, c, "start")} />
+                      <span className="pd-trim r" title="Drag to change where it ends" onPointerDown={e => H.current.onEdgeDown(e, c, "end")} />
+                    </>}
+                  </button>
+                ))}
+                {tr.id === "voice" && gapSpans(prod).map(g => (
+                  <button key={"gap" + g.i} className={"pd-gap" + (selGap === g.i ? " sel" : "")} style={{ left: g.start * zoom, width: Math.max(6, g.dur * zoom) }}
+                    title={`Pause, ${g.dur.toFixed(1)} s: click to change its length`} onPointerDown={e => { e.stopPropagation(); setSel(null); setSelGap(g.i); }}>
+                    {g.dur * zoom > 40 ? `Pause ${g.dur.toFixed(1)}s` : "‖"}
+                  </button>
+                ))}
+              </div>
+            ))}
+  </>), [prod, sel, selGap, zoom]);
+
   // Editing actions (toolbar and keyboard), CapCut style.
   const canEdit = !!selected && !selLocked;
   const doSplit = () => { if (canEdit && selected && t > selected.start + 0.2 && t < selected.end - 0.2) setProd(q => split(q, selected.id, t)); };
@@ -411,7 +442,6 @@ export function Production({ script, view, scriptPath }: Props) {
   };
   const marker = () => setProd(q => toggleMarker(q, t));
   // Pauses: added at the playhead (at the end: room after your last word).
-  const [selGap, setSelGap] = useState<number | null>(null);
   const addPause = (d = 1) => {
     if (!prod) return;
     if (t < 0.05) { setHint("Move the playhead a little after the start to add a pause."); return; }
@@ -782,27 +812,7 @@ export function Production({ script, view, scriptPath }: Props) {
               {chs.map(c => <span key={c.start} className="chap" style={{ left: c.start * zoom }}>◆ {c.name}</span>)}
               {(prod.markers ?? []).map(m => <span key={m} className="pd-mark" style={{ left: m * zoom }} title={`Marker at ${fmtMs(m)} (M at the playhead removes it)`} />)}
             </div>
-            {TRACKS.map(tr => (
-              <div key={tr.id} className={"pd-lane" + (isOff(prod, tr.id) ? " off" : "") + (isLocked(prod, tr.id) ? " locked" : "")} onClick={laneClick}>
-                {clipsOn(prod, tr.id).map(c => (
-                  <button key={c.id} className={"pd-clip " + CLIP_COLOURS[tr.id] + (sel === c.id ? " sel" : "") + (c.track === "titles" || c.track === "sfx" || c.track === "music" ? " movable" : "")}
-                    style={{ left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={clipLabel(c)}
-                    onPointerDown={e => onClipDown(e, c)} onPointerMove={onClipMove} onPointerUp={onClipUp}>
-                    {clipLabel(c)}
-                    {trimmable(c) && !isLocked(prod, c.track) && (c.end - c.start) * zoom > 14 && <>
-                      <span className="pd-trim l" title="Drag to change where it starts" onPointerDown={e => onEdgeDown(e, c, "start")} />
-                      <span className="pd-trim r" title="Drag to change where it ends" onPointerDown={e => onEdgeDown(e, c, "end")} />
-                    </>}
-                  </button>
-                ))}
-                {tr.id === "voice" && gapSpans(prod).map(g => (
-                  <button key={"gap" + g.i} className={"pd-gap" + (selGap === g.i ? " sel" : "")} style={{ left: g.start * zoom, width: Math.max(6, g.dur * zoom) }}
-                    title={`Pause, ${g.dur.toFixed(1)} s: click to change its length`} onPointerDown={e => { e.stopPropagation(); setSel(null); setSelGap(g.i); }}>
-                    {g.dur * zoom > 40 ? `Pause ${g.dur.toFixed(1)}s` : "‖"}
-                  </button>
-                ))}
-              </div>
-            ))}
+            {lanes}
             {(prod.markers ?? []).map(m => <div key={m} className="pd-mark-line" style={{ left: m * zoom }} aria-hidden="true" />)}
             <div className="pd-head-line" style={{ left: t * zoom }} aria-hidden="true" />
           </div>
@@ -811,7 +821,7 @@ export function Production({ script, view, scriptPath }: Props) {
     </div>
   );
 
-  const exportPane = (
+  const exportPane = pane === "export" && (
     <div className="pd-export">
       <div className="panel">
         <div className="ph"><button className="btn ghost" onClick={() => setPane("edit")}>← Timeline</button><h2>Pro checks</h2><span className="meta">{checks.filter(c => c.ok).length} of {checks.length} pass</span></div>
