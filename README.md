@@ -183,7 +183,8 @@ lays it out on seven lanes: titles, camera, slides, voice, music, sound effects 
 - **Preview** plays the cut with slides, camera bubble, titles and captions drawn as they will export.
 - **Library**: Media (camera layouts), Text (title card, lower third, chapter, key term, end card),
   Audio (your music, a whoosh or pop made by the app) and Brand (accent colour, name, course).
-- **Timeline**: click to seek, drag titles and sound effects (they snap to sentence starts),
+- **Timeline**: click or drag the ruler to seek; drag a clip's left or right edge to make it start or end
+  earlier or later (slides and camera: the clip next to it follows); drag titles, sound effects and music to move them (all snap to sentence starts),
   `S` splits the selected clip at the playhead, `Delete` removes it, `Space` plays. "Fit" shows the whole video.
 - **Inspector**: change the selected clip, e.g. camera full screen or bubble for part of the video,
   a slow zoom on a slide, music volume and ducking, caption style.

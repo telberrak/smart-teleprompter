@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseScript } from "./script";
-import { at, bestCorner, refit, buildProduction, chapterName, chapters, clipsOn, description, move, proChecks, snap, split, update } from "./production";
+import { at, bestCorner, refit, buildProduction, chapterName, chapters, clipsOn, description, move, proChecks, snap, split, trim, update } from "./production";
 import type { Segment } from "./edit";
 import type { Frame } from "./excalidraw";
 
@@ -67,5 +67,28 @@ describe("production", () => {
     expect(clipsOn(r, "titles").map(t => [t.kind, t.start, t.end])).toEqual([["title", 0, 4], ["lower", 4.5, 10], ["chapter", 10, 13], ["chapter", 20, 23], ["outro", 20, 25]]);
     expect(clipsOn(r, "captions")[0].style).toBe("bold");
     expect(r.cutKey).toBe(shorter.cutKey);
+  });
+});
+
+describe("trimming clips", () => {
+  const p = buildProduction(segs, script, { hasCamera: true, corner: "br" });
+  it("moves the shared edge of two touching slides together", () => {
+    const [a, b] = clipsOn(p, "slides");
+    if (!b || Math.abs(a.end - b.start) > 0.05) return;
+    const q = trim(p, b.id, "start", a.end - 1);
+    const [a2, b2] = clipsOn(q, "slides");
+    expect(b2.start).toBeCloseTo(a.end - 1);
+    expect(a2.end).toBeCloseTo(b2.start);
+  });
+  it("keeps a minimum length and the camera covering the whole video", () => {
+    const [a] = clipsOn(p, "slides");
+    const q = trim(p, a.id, "end", a.start - 5);
+    expect(clipsOn(q, "slides")[0].end - a.start).toBeCloseTo(0.5);
+    const cam = clipsOn(p, "camera")[0];
+    expect(trim(p, cam.id, "start", 3)).toBe(p);
+  });
+  it("leaves voice and captions alone", () => {
+    const v = clipsOn(p, "voice")[0];
+    expect(trim(p, v.id, "end", 1)).toBe(p);
   });
 });

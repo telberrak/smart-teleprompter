@@ -206,6 +206,35 @@ export function move(p: Production, id: string, start: number): Production {
   return update(p, id, { start: s, end: r3(s + d) });
 }
 
+/** Clips you can lengthen or shorten by dragging an edge (voice and captions follow the cut). */
+export const trimmable = (c: Clip) => c.track !== "voice" && c.track !== "captions";
+
+/**
+ * Drag one edge of a clip to time t. On the camera and slides lanes, a neighbour that touches
+ * that edge moves with it (so no gap or overlap appears); the camera always covers the whole video.
+ */
+export function trim(p: Production, id: string, edge: "start" | "end", t: number, min = 0.5): Production {
+  const c = p.clips.find(x => x.id === id);
+  if (!c || !trimmable(c)) return p;
+  const list = clipsOn(p, c.track);
+  const i = list.findIndex(x => x.id === id);
+  const linked = c.track === "camera" || c.track === "slides";
+  if (edge === "start") {
+    if (c.track === "camera" && i === 0) return p;
+    const prev = list[i - 1];
+    const touching = linked && !!prev && Math.abs(prev.end - c.start) < 0.05;
+    const lo = touching ? prev.start + min : linked && prev ? prev.end : 0;
+    const s = r3(Math.max(lo, Math.min(c.end - min, t)));
+    return { ...p, clips: p.clips.map(x => (x.id === id ? ({ ...x, start: s } as Clip) : touching && x.id === prev.id ? ({ ...x, end: s } as Clip) : x)) };
+  }
+  if (c.track === "camera" && i === list.length - 1) return p;
+  const next = list[i + 1];
+  const touching = linked && !!next && Math.abs(next.start - c.end) < 0.05;
+  const hi = touching ? next.end - min : linked && next ? next.start : p.seconds;
+  const e = r3(Math.min(hi, Math.max(c.start + min, t)));
+  return { ...p, clips: p.clips.map(x => (x.id === id ? ({ ...x, end: e } as Clip) : touching && x.id === next.id ? ({ ...x, start: e } as Clip) : x)) };
+}
+
 export function add(p: Production, clip: Omit<Clip, "id">): Production {
   return { ...p, clips: [...p.clips, { ...clip, id: uid(clip.track[0]) } as Clip] };
 }

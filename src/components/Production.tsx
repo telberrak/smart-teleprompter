@@ -13,7 +13,7 @@ import type { Frame } from "../lib/excalidraw";
 import { drawCaption, drawTitle, shortHeaderPng, thumbnailPng, titlePng } from "../lib/titleArt";
 import { SHORT_LAYOUT, SHORT_MAX, captionYAt, shortAss, shortCues, shortPieces, shortSeconds, stressedWords, suggestShort } from "../lib/short";
 import {
-  TRACKS, DEFAULT_BRAND, add, at, buildProduction, chapters, clipsOn, cutKey, description, move, proChecks, remove, snap, snapPoints, split, update,
+  TRACKS, DEFAULT_BRAND, add, at, trim, trimmable, buildProduction, chapters, clipsOn, cutKey, description, move, proChecks, remove, snap, snapPoints, split, update,
   type Brand, type Clip, type Production as Prod, type TitleKind, type TrackId,
 } from "../lib/production";
 
@@ -223,19 +223,29 @@ export function Production({ script, view, scriptPath }: Props) {
 
   // Timeline dragging: titles and sound effects move, snapping to sentence edges.
   const points = useMemo(() => snapPoints(segs), [segs]);
-  const drag = useRef<{ id: string; x0: number; s0: number; moved: boolean } | null>(null);
+  // Every clip but voice and captions can be trimmed by its edges; titles, sound effects and music also move.
+  const drag = useRef<{ id: string; x0: number; s0: number; moved: boolean; mode: "move" | "start" | "end" } | null>(null);
   const onClipDown = (e: RPointerEvent, c: Clip) => {
     setSel(c.id);
-    if (c.track !== "titles" && c.track !== "sfx") return;
+    if (c.track !== "titles" && c.track !== "sfx" && c.track !== "music") return;
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    drag.current = { id: c.id, x0: e.clientX, s0: c.start, moved: false };
+    drag.current = { id: c.id, x0: e.clientX, s0: c.start, moved: false, mode: "move" };
+  };
+  const onEdgeDown = (e: RPointerEvent, c: Clip, edge: "start" | "end") => {
+    e.stopPropagation();
+    setSel(c.id);
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    drag.current = { id: c.id, x0: e.clientX, s0: edge === "start" ? c.start : c.end, moved: false, mode: edge };
   };
   const onClipMove = (e: RPointerEvent) => {
     const d = drag.current;
     if (!d) return;
     const dx = (e.clientX - d.x0) / zoom;
     if (Math.abs(e.clientX - d.x0) > 3) d.moved = true;
-    if (d.moved) setProd(q => move(q, d.id, magnet ? snap(d.s0 + dx, points) : d.s0 + dx));
+    if (!d.moved) return;
+    const to = magnet ? snap(d.s0 + dx, points) : d.s0 + dx;
+    if (d.mode === "move") setProd(q => move(q, d.id, to));
+    else { const mode = d.mode; setProd(q => trim(q, d.id, mode, to)); }
   };
   const onClipUp = () => { drag.current = null; };
   // Playhead: click or drag on the ruler (it follows the pointer, like CapCut).
@@ -259,7 +269,7 @@ export function Production({ script, view, scriptPath }: Props) {
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (e.code === "Space") { e.preventDefault(); togglePlay(); }
       else if (e.key === "s" && sel) setProd(q => split(q, sel, t));
-      else if ((e.key === "Delete" || e.key === "Backspace") && selected && (selected.track === "titles" || selected.track === "sfx" || selected.track === "music")) { setProd(q => remove(q, selected.id)); setSel(null); }
+      else if ((e.key === "Delete" || e.key === "Backspace") && selected && (selected.track === "titles" || selected.track === "sfx" || selected.track === "music" || selected.track === "slides")) { setProd(q => remove(q, selected.id)); setSel(null); }
     };
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
@@ -487,7 +497,7 @@ export function Production({ script, view, scriptPath }: Props) {
             <label className="pd-field">Comes in<select value={selected.enter} onChange={e => patch({ enter: e.target.value as "fade" })}><option value="fade">Fade</option><option value="cut">Cut</option></select></label>
             <label className="pd-field">Motion<select value={selected.motion} onChange={e => patch({ motion: e.target.value as "none" })}><option value="none">Still</option><option value="zoom">Slow zoom in</option></select></label>
             <label className="pd-field">Camera bubble here<select value={selected.corner ?? ""} onChange={e => patch({ corner: (e.target.value || undefined) as Corner | undefined })}><option value="">Same as camera</option>{CORNERS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>
-            <span className="small-note">Slides stay tied to the sentence of their ON SCREEN note. To change when one starts, change the note in Prepare.</span>
+            <span className="small-note">Drag a slide's left or right edge on the timeline to change when it starts or ends (it snaps to sentences; the slide next to it follows). <kbd>S</kbd> splits it, <kbd>Delete</kbd> removes it (a blank board shows there; set the camera clip to full screen if you like).</span>
           </>}
           {selected.track === "voice" && <>
             <label className="row" htmlFor="vclean">Clean up (hum, hiss, levels)<input id="vclean" type="checkbox" className="switch" checked={selected.clean} onChange={e => patch({ clean: e.target.checked })} /></label>
@@ -545,9 +555,15 @@ export function Production({ script, view, scriptPath }: Props) {
             {TRACKS.map(tr => (
               <div key={tr.id} className="pd-lane" onClick={laneClick}>
                 {clipsOn(prod, tr.id).map(c => (
-                  <button key={c.id} className={"pd-clip " + CLIP_COLOURS[tr.id] + (sel === c.id ? " sel" : "") + (c.track === "titles" || c.track === "sfx" ? " movable" : "")}
+                  <button key={c.id} className={"pd-clip " + CLIP_COLOURS[tr.id] + (sel === c.id ? " sel" : "") + (c.track === "titles" || c.track === "sfx" || c.track === "music" ? " movable" : "")}
                     style={{ left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={clipLabel(c)}
-                    onPointerDown={e => onClipDown(e, c)} onPointerMove={onClipMove} onPointerUp={onClipUp}>{clipLabel(c)}</button>
+                    onPointerDown={e => onClipDown(e, c)} onPointerMove={onClipMove} onPointerUp={onClipUp}>
+                    {clipLabel(c)}
+                    {trimmable(c) && (c.end - c.start) * zoom > 14 && <>
+                      <span className="pd-trim l" title="Drag to change where it starts" onPointerDown={e => onEdgeDown(e, c, "start")} />
+                      <span className="pd-trim r" title="Drag to change where it ends" onPointerDown={e => onEdgeDown(e, c, "end")} />
+                    </>}
+                  </button>
                 ))}
               </div>
             ))}
