@@ -97,9 +97,9 @@ instead (and to play it). **Redo** jumps to Record at that sentence; the new tak
 
 - **🔒 Lock** keeps the chosen read, even after a restart or a new recording of that sentence.
   An unlocked choice holds until you record the sentence again. **Lock all / Unlock all** at the top.
-- **×** hides a bad read (the take file is kept; "show hidden" brings it back).
+- **×** removes a bad read from its sentence ("Restore N removed reads" brings them all back; Recordings below deletes whole takes).
 - **Recordings** (right): show or delete a whole take; deleted takes go to the Recycle Bin.
-- **Reset all…** clears choices, locks and hidden reads, and can also delete all recordings.
+- **Reset all…** clears choices, locks and removed reads, and can also delete all recordings.
 
 Choices are saved in `takes/<script>/review.json`, next to the takes.
 

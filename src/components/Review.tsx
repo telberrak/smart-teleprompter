@@ -71,10 +71,9 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
     if (typeof p === "object" && p.read === r.id) delete picks[r.sentence];
     return { ...s, picks, hidden: [...s.hidden, hiddenKey(r)] };
   });
-  const unhide = (n: number) => setReview(s => ({ ...s, hidden: s.hidden.filter(h => !h.startsWith(n + ":")) }));
-  const hiddenCount = (n: number) => review.hidden.filter(h => h.startsWith(n + ":")).length;
+  const restoreRemoved = () => setReview(s => ({ ...s, hidden: [] }));
   const resetAll = async () => {
-    if (!window.confirm("Reset all choices? Every sentence goes back to its latest read, locks are removed and hidden reads come back. Your recordings are kept.")) return;
+    if (!window.confirm("Reset all choices? Every sentence goes back to its latest read, locks are removed and removed reads come back. Your recordings are kept.")) return;
     setReview(() => emptyReview());
     if (io && takes.length && window.confirm(`Also delete all ${takes.length} recordings of this script? They go to the Recycle Bin.`)) {
       try { await io.remove(scriptPath, takes.map(t => t.file)); } catch (e) { setError(String((e as Error).message ?? e)); }
@@ -155,9 +154,10 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
           <button className="btn ghost" onClick={() => lockAll(true)} disabled={!recorded}>🔒 Lock all</button>
           <button className="btn ghost" onClick={() => lockAll(false)} disabled={!recorded}>🔓 Unlock all</button>
           <span className="pd-spacer" />
+          {review.hidden.length > 0 && <button className="btn ghost" onClick={restoreRemoved} title="Bring back every read you removed with ×">Restore {review.hidden.length} removed read{review.hidden.length === 1 ? "" : "s"}</button>}
           <button className="btn ghost danger" onClick={() => void resetAll()}>Reset all…</button>
         </div>
-        <div className="tl-head"><span className="label">#</span><span className="label">Sentence</span><span className="label">Reads (★ used, 🔒 locked, × hide)</span><span className="label">Lock</span><span className="label">Fix</span></div>
+        <div className="tl-head"><span className="label">#</span><span className="label">Sentence</span><span className="label">Reads (★ used, 🔒 locked, × remove)</span><span className="label">Lock</span><span className="label">Fix</span></div>
         <div className="tl">
           {S.map((s, i) => {
             const e = edit[i];
@@ -176,12 +176,11 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
                           onClick={() => { use(r); play([r]); }}>
                           <span className="tm"><span>T{r.take}{same.length > 1 ? `·${same.indexOf(r) + 1}` : ""}{used && <span className="star"> {lk ? "🔒" : "★"}</span>}</span><span>{(r.end - r.start).toFixed(1)}s</span></span>
                         </button>
-                        {!lk && <button className="x" title="Hide this read (the take file is kept)" aria-label={`Hide read T${r.take}`} onClick={() => hide(r)}>×</button>}
+                        {!lk && <button className="x" title="Remove this read from the sentence (to delete a whole recording, use Recordings below)" aria-label={`Remove read T${r.take}`} onClick={() => hide(r)}>×</button>}
                       </span>
                     );
                   })}
                   {!e?.reads.length && <span className="none">not recorded yet</span>}
-                  {hiddenCount(i + 1) > 0 && <button className="linkbtn" onClick={() => unhide(i + 1)}>show {hiddenCount(i + 1)} hidden</button>}
                 </div>
                 <button className={"lk" + (lockedOf(i) ? " on" : "")} onClick={() => toggleLock(i)} disabled={!e?.chosen} aria-pressed={lockedOf(i)}
                   title={lockedOf(i) ? "Locked: this read stays chosen, even after you record the sentence again. Click to unlock." : "Lock the chosen read so it stays chosen after a restart or a new recording"}>
