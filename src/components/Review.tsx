@@ -8,6 +8,7 @@ import { CORNERS, isCorner, loadCorner, saveCorner, type Corner } from "../lib/b
 import { cues, toSrt } from "../lib/captions";
 import { buildEdit, emptyReview, hiddenKey, timeline, totalSeconds, type Pick, type Segment, type TakeInfo } from "../lib/edit";
 import { useReview } from "../lib/reviewState";
+import { exportJob } from "../lib/exportJob";
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
@@ -114,6 +115,7 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
 
   const doExport = async () => {
     if (!io) return;
+    if (exportJob.get()?.running) { setError("Production is exporting in the background: wait for it to finish (see the header)."); return; }
     setError(""); setResult(null); setProgress(0); busy.current = true;
     try { localStorage.setItem("tp.burn", burn ? "1" : "0"); } catch { /* private window */ }
     const srt = toSrt(cues(segs, n => S[n - 1]?.spoken ?? ""));
@@ -125,6 +127,7 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
   // Whiteboard video: slides full screen at each ON SCREEN step, camera in a round bubble, captions.
   const doWhiteboard = async () => {
     if (!io) return;
+    if (exportJob.get()?.running) { setError("Production is exporting in the background: wait for it to finish (see the header)."); return; }
     setError(""); setWb(null); setProgress(0); busy.current = true;
     try { localStorage.setItem("tp.wbcap", wbCaptions ? "1" : "0"); localStorage.setItem("tp.remotion", remotion ? "1" : "0"); } catch { /* private window */ }
     try {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import sample from "./sample/1.3-whiteboard-script.md?raw";
 import { parseScript, replaceSentence } from "./lib/script";
 import { inElectron, openScript, openSlides, reopenScript, saveScript, type OpenedScript } from "./lib/bridge";
@@ -8,6 +8,7 @@ import { Prepare } from "./components/Prepare";
 import { Record } from "./components/Record";
 import { Review } from "./components/Review";
 import { Production } from "./components/Production";
+import { useExportJob } from "./lib/exportJob";
 
 type Screen = "prepare" | "record" | "review" | "production";
 const SCREENS: Screen[] = ["prepare", "record", "review", "production"];
@@ -90,6 +91,16 @@ export function App() {
     }
   }, [md, script, file]);
 
+  // The Production export keeps running in the background: a chip in the header, a note when it ends.
+  const job = useExportJob();
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && job && !job.running && screen !== "production")
+      setNote(job.error ? "Export failed: open Production to see why" : `Exported ${job.result?.file?.split(/[\\/]/).pop() ?? "your files"}`);
+    wasRunning.current = !!job?.running;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job]);
+
   if (restoring) return <div className="app"><p className="restoring">Opening {lastSession()?.path?.split(/[\\/]/).pop() ?? "your last script"}…</p></div>;
 
   return (
@@ -105,6 +116,10 @@ export function App() {
             </button>
           ))}
         </nav>
+        {job && screen !== "production" && (job.running || job.result || job.error) && (
+          <button className={"jobchip" + (job.error ? " err" : job.running ? "" : " done")} onClick={() => setScreen("production")} title="Open Production">
+            {job.running ? `${job.stage}${job.stage === "Exporting" ? ` ${Math.round(job.progress * 100)}%` : "…"}` : job.error ? "Export failed" : "✓ Export done"}
+          </button>)}
         <span className="offline">Offline</span>
       </header>
       {screen === "prepare" && <Prepare script={script} view={view} fileName={file.name} saved={!!file.path} onOpen={open} onOpenSlides={pickSlides} onEdit={edit} onRecord={() => { setStartAt(0); setScreen("record"); }} />}

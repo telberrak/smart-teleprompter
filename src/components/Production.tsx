@@ -4,6 +4,7 @@ import type { SlideView } from "./ScreenCard";
 import { takes as io, mediaUrl, type ProductionOptions, type ProductionResult } from "../lib/bridge";
 import { buildEdit, timeline, type Segment, type TakeInfo } from "../lib/edit";
 import { useReview } from "../lib/reviewState";
+import { exportJob, useExportJob } from "../lib/exportJob";
 import { refit } from "../lib/production";
 import { cues, toSrt } from "../lib/captions";
 import { loadCorner, CORNERS, type Corner } from "../lib/bubble";
@@ -73,9 +74,13 @@ export function Production({ script, view, scriptPath }: Props) {
     return () => ro.disconnect();
   });
   const [magnet, setMagnet] = useState(true);
-  const [result, setResult] = useState<ProductionResult | null>(null);
+  // The export lives outside this screen (it keeps running when you switch tabs).
+  const job = useExportJob();
+  const mine = job && job.scriptPath === scriptPath ? job : null;
+  const result = mine?.result ?? null;
+  const exporting = !!mine?.running;
   const [outs, setOuts] = useState(() => store.get("tp.outs", { mp4: true, srt: true, txt: true, png: true, short: false }));
-  const [shortFile, setShortFile] = useState<string | null>(null);
+  const shortFile = mine?.short ?? null;
   const [thumb, setThumb] = useState<{ step: number; at: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const zoom = zoomSet || Math.max(0.5, (laneW - 20) / Math.max(1, prod?.seconds ?? 60));
@@ -136,7 +141,7 @@ export function Production({ script, view, scriptPath }: Props) {
   useEffect(() => io?.onExportProgress(x => { if (busy.current) setProgress(x); }), []);
   const needsRebuild = !!prod && (prod.cutKey !== key || cutState === "stale" || cutState === "missing");
   const doRebuild = async () => {
-    if (!io || !prod || busy.current) return;
+    if (!io || !prod || busy.current || exportJob.get()?.running) return;
     busy.current = true; setBuilding(true); setProgress(0); setError("");
     try {
       const c = await io.productionCut(scriptPath, segs);
@@ -233,7 +238,7 @@ export function Production({ script, view, scriptPath }: Props) {
   const [rebuilt, setRebuilt] = useState("");
   useEffect(() => { if (!rebuilt) return; const id = setTimeout(() => setRebuilt(""), 6000); return () => clearTimeout(id); }, [rebuilt]);
   const rebuild = async () => {
-    if (!segs.length || busy.current) return;
+    if (!segs.length || busy.current || exportJob.get()?.running) return;
     if (!window.confirm("Start the timeline over from your cut?\n\nTitles, music and your edits are removed; your brand kit is kept.")) return;
     setRebuilt(""); setError("");
     if (io && (cutState === "stale" || cutState === "missing")) {
@@ -425,7 +430,7 @@ export function Production({ script, view, scriptPath }: Props) {
       pieces, layout: SHORT_LAYOUT, background: "0x0c0f14", loudness: voice?.loudness ?? -14, clean: voice?.clean ?? true,
       slides, header: await shortHeaderPng(prod.title, prod.brand), ass,
     });
-    setShortFile(r.file);
+    exportJob.set({ short: r.file });
   };
 
   // Delete the video: exported files to the Recycle Bin, timeline back to the automatic one.
@@ -435,7 +440,7 @@ export function Production({ script, view, scriptPath }: Props) {
     const names = files.map(f => f.split(/[\\/]/).pop()).join(", ");
     if (!window.confirm(`Delete this video?\n\n${files.length ? `These go to the Recycle Bin: ${names}.\n\n` : ""}The timeline starts over (titles, music and your edits are removed) and the cut is made again from your takes when you click Build. Your recordings and Review choices are kept.`)) return;
     try { if (files.length) await io.deleteProduction(scriptPath); } catch (e) { setError(String((e as Error).message ?? e)); return; }
-    setResult(null); setShortFile(null); setSel(null); seek(0);
+    exportJob.clear(); setSel(null); seek(0);
     // The cut went too: the preview waits for "Build the cut".
     if (files.length) { setCut(null); setCutState("missing"); }
     setProd(buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand }));
@@ -443,34 +448,39 @@ export function Production({ script, view, scriptPath }: Props) {
   };
 
   const doExport = async () => {
-    if (!io || !prod) return;
+    if (!io || !prod || exportJob.get()?.running) return;
     if (needsRebuild) { setError("Your cut changed in Review: rebuild it (Preview) before exporting."); return; }
-    setError(""); setResult(null); setShortFile(null); setProgress(0); busy.current = true;
+    setError(""); exportJob.start(scriptPath);
     store.set("tp.outs", outs);
     try {
-      if (outs.short) await doShort();
-      if (!outs.mp4 && !outs.srt && !outs.txt && !outs.png) return;
       const prod = live!; // hidden or muted lanes left out
-      const slides: ProductionOptions["slides"] = [];
-      for (const s of clipsOn(prod, "slides")) {
-        const d = plans.get(s.id);
-        slides.push(d ? await drawInFrames(d.frame, d.plan, s.start, s.end) : await stepPng(script, view, s.step));
-      }
-      const titles: Uint8Array[] = [];
-      for (const ti of clipsOn(prod, "titles")) titles.push(await titlePng(ti, prod.brand));
-      const { mask, ring } = await bubblePngs(360);
+      // The thumbnail's slide first: the preview's pictures go away if you leave this screen.
       const th = thumb ?? { step: clipsOn(prod, "slides")[0]?.step ?? 0, at: Math.min(2, prod.seconds / 2) };
       let img: HTMLImageElement | null = null;
       const url = slideUrls.current.get(th.step);
       if (url) { img = new Image(); img.src = url; await img.decode().catch(() => { img = null; }); }
       const corner: Corner = clipsOn(prod, "camera").find(c => c.layout === "bubble")?.corner ?? loadCorner();
       const png = await thumbnailPng(img, prod.title, prod.brand, corner);
-      setResult(await io.exportProduction(scriptPath, segs, {
+      if (outs.short) { exportJob.set({ stage: "Making the Short" }); await doShort(); }
+      if (!outs.mp4 && !outs.srt && !outs.txt && !outs.png) { exportJob.set({ running: false, progress: 1, stage: "Done" }); return; }
+      exportJob.set({ stage: "Preparing slides", progress: 0 });
+      const slides: ProductionOptions["slides"] = [];
+      const list = clipsOn(prod, "slides");
+      for (const [i, s] of list.entries()) {
+        const d = plans.get(s.id);
+        slides.push(d ? await drawInFrames(d.frame, d.plan, s.start, s.end) : await stepPng(script, view, s.step));
+        exportJob.set({ stage: `Preparing slides (${i + 1} of ${list.length})` });
+      }
+      const titles: Uint8Array[] = [];
+      for (const ti of clipsOn(prod, "titles")) titles.push(await titlePng(ti, prod.brand));
+      const { mask, ring } = await bubblePngs(360);
+      exportJob.set({ stage: "Exporting", progress: 0 });
+      const res = await io.exportProduction(scriptPath, segs, {
         production: prod, slides, titles, mask, ring, srt: toSrt(capList), description: description(prod, segs, script),
         thumbnail: { png, at: th.at, corner }, outputs: outs,
-      }));
-    } catch (e) { setError(String((e as Error).message ?? e)); }
-    finally { busy.current = false; setProgress(null); }
+      });
+      exportJob.set({ running: false, progress: 1, stage: "Done", result: res });
+    } catch (e) { exportJob.set({ running: false, stage: "Failed", error: String((e as Error).message ?? e) }); }
   };
 
   if (!io) return <section className="screen on" id="production"><div className="panel"><div className="ph"><h2>Production</h2></div><p className="pd-empty">Production works in the desktop app.</p></div></section>;
@@ -736,10 +746,11 @@ export function Production({ script, view, scriptPath }: Props) {
           <span className="small-note">Your face comes from the camera at that slide; the title is the lesson title.</span>
           <span className="label">YouTube description</span>
           <pre className="pd-desc">{description(prod, segs, script)}</pre>
-          <button className="btn primary pd-go" onClick={() => void doExport()} disabled={progress !== null || building || needsRebuild}>
-            {progress !== null ? `Exporting… ${Math.round(progress * 100)}%` : `Export ${Object.values(outs).filter(Boolean).length} file${Object.values(outs).filter(Boolean).length === 1 ? "" : "s"}`}
+          <button className="btn primary pd-go" onClick={() => void doExport()} disabled={!!job?.running || building || needsRebuild}>
+            {exporting ? `${mine!.stage}… ${mine!.stage === "Exporting" ? Math.round(mine!.progress * 100) + "%" : ""}` : job?.running ? "Another script is exporting…" : `Export ${Object.values(outs).filter(Boolean).length} file${Object.values(outs).filter(Boolean).length === 1 ? "" : "s"}`}
           </button>
-          {progress !== null && <div className="vsetup"><div className="bar"><b style={{ width: `${Math.round(progress * 100)}%` }} /></div></div>}
+          {exporting && <div className="vsetup"><div className="bar"><b style={{ width: `${Math.round((mine!.stage === "Exporting" ? mine!.progress : 0) * 100)}%` }} /></div></div>}
+          {exporting && <span className="small-note">You can switch to another tab: the export carries on and the files show here when it is done.</span>}
           {shortFile && <div className="out"><span className="ext">9:16</span><span className="f" title={shortFile}>{shortFile.split(/[\\/]/).pop()}</span><button className="linkbtn" onClick={() => void io?.reveal(shortFile)}>Show file</button></div>}
           {result && ([["MP4", result.file], ["SRT", result.srt], ["TXT", result.txt], ["PNG", result.png]] as const).filter(([, f]) => f).map(([ext, f]) => (
             <div key={ext} className="out"><span className="ext">{ext}</span><span className="f" title={f!}>{f!.split(/[\\/]/).pop()}</span><button className="linkbtn" onClick={() => void io?.reveal(f!)}>Show file</button></div>
@@ -755,7 +766,7 @@ export function Production({ script, view, scriptPath }: Props) {
         <div className="pd-work">{lib}{preview}{insp}</div>
         {tl}
       </> : exportPane}
-      {error && <div className="vsetup err">{error}</div>}
+      {(error || mine?.error) && <div className="vsetup err">{error || mine?.error}</div>}
     </section>
   );
 }
