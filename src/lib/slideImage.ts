@@ -8,7 +8,8 @@ import type { SlideView } from "../components/ScreenCard";
 import { FONTS, FONT_SCALE, shapes } from "../components/Slide";
 import { Diagram } from "../components/Diagram";
 
-export const W = 1920, H = 1080;
+import { W, H, fitFrame } from "./slideLayout";
+export { W, H };
 
 function canvas(w = W, h = H) {
   const c = document.createElement("canvas");
@@ -24,16 +25,12 @@ async function fontsReady() {
   try { await Promise.all([document.fonts.load("40px Caveat"), document.fonts.load("700 40px Caveat")]); } catch { /* offline: fallback fonts */ }
 }
 
-/** Space kept clear around the slide: a little air, and room for captions at the bottom. */
-const PAD = { left: 64, right: 64, top: 40, bottom: 130 };
-
 /** One Excalidraw frame, fitted inside 1920x1080 on white. */
 export function drawFrame(ctx: CanvasRenderingContext2D, frame: Frame, w = W, h = H) {
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
-  const aw = w - PAD.left - PAD.right, ah = h - PAD.top - PAD.bottom;
-  const s = Math.min(aw / frame.width, ah / frame.height);
+  const { s, ox, oy } = fitFrame(frame, w, h);
   ctx.save();
-  ctx.translate(PAD.left + (aw - frame.width * s) / 2, PAD.top + (ah - frame.height * s) / 2);
+  ctx.translate(ox, oy);
   ctx.scale(s, s);
   ctx.translate(-frame.x, -frame.y);
   ctx.beginPath(); ctx.rect(frame.x, frame.y, frame.width, frame.height); ctx.clip();

@@ -7,9 +7,10 @@ import type { SlideView } from "./components/ScreenCard";
 import { Prepare } from "./components/Prepare";
 import { Record } from "./components/Record";
 import { Review } from "./components/Review";
+import { Production } from "./components/Production";
 
-type Screen = "prepare" | "record" | "review";
-const SCREENS: Screen[] = ["prepare", "record", "review"];
+type Screen = "prepare" | "record" | "review" | "production";
+const SCREENS: Screen[] = ["prepare", "record", "review", "production"];
 
 export function App() {
   const [md, setMd] = useState(sample);
@@ -76,6 +77,7 @@ export function App() {
       </header>
       {screen === "prepare" && <Prepare script={script} view={view} fileName={file.name} saved={!!file.path} onOpen={open} onOpenSlides={pickSlides} onEdit={edit} onRecord={() => { setStartAt(0); setScreen("record"); }} />}
       {screen === "record" && <Record script={script} view={view} startAt={startAt} onEdit={edit} scriptPath={file.path} />}
+      {screen === "production" && <Production script={script} view={view} scriptPath={file.path} />}
       {screen === "review" && <Review script={script} view={view} scriptPath={file.path} onRedo={i => { setStartAt(i); setScreen("record"); }} />}
       <div className={"gtoast" + (note ? " show" : "")} role="status">{note}</div>
     </div>

@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld("teleprompter", {
     list: scriptPath => ipcRenderer.invoke("takes:list", scriptPath),
     exportCut: (scriptPath, segs, opts) => ipcRenderer.invoke("export:run", scriptPath, segs, opts),
     exportWhiteboard: (scriptPath, segs, opts) => ipcRenderer.invoke("export:whiteboard", scriptPath, segs, opts),
+    productionCut: (scriptPath, segs) => ipcRenderer.invoke("production:cut", scriptPath, segs),
+    pickMusic: () => ipcRenderer.invoke("production:pickMusic"),
+    exportProduction: (scriptPath, segs, opts) => ipcRenderer.invoke("production:export", scriptPath, segs, opts),
     onExportProgress: cb => {
       const h = (_e, p) => cb(p);
       ipcRenderer.on("export:progress", h);

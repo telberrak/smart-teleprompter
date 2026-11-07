@@ -1,5 +1,6 @@
 import type { Segment, TakeInfo } from "./edit";
 import type { Timeline } from "./storyboard";
+import type { Production } from "./production";
 // Access to the Electron main process (see electron/preload.cjs).
 // In a plain browser (npm run web) these fall back to file pickers and in-memory saving.
 
@@ -37,6 +38,10 @@ export interface TakesBridge {
   list(scriptPath: string | null): Promise<{ dir: string; takes: (TakeInfo & { error?: string })[] }>;
   exportCut(scriptPath: string | null, segs: Segment[], opts?: { srt?: string; burn?: boolean }): Promise<ExportResult>;
   exportWhiteboard(scriptPath: string | null, segs: Segment[], opts: WhiteboardOptions): Promise<WhiteboardResult>;
+  /** The joined cut for the Production preview (made, or reused when unchanged). */
+  productionCut(scriptPath: string | null, segs: Segment[]): Promise<{ file: string; seconds: number }>;
+  pickMusic(): Promise<string | null>;
+  exportProduction(scriptPath: string | null, segs: Segment[], opts: ProductionOptions): Promise<ProductionResult>;
   onExportProgress(cb: (p: number) => void): () => void;
 }
 
@@ -50,6 +55,19 @@ export interface WhiteboardOptions {
   captions: boolean;
   remotion: boolean;
 }
+export interface ProductionOptions {
+  production: Production;
+  /** One PNG per slide clip and per title clip, in start order. */
+  slides: Uint8Array[];
+  titles: Uint8Array[];
+  mask: Uint8Array;
+  ring: Uint8Array;
+  srt: string;
+  description: string;
+  thumbnail?: { png: Uint8Array; at: number; corner: "tl" | "tr" | "bl" | "br" };
+  outputs: { mp4: boolean; srt: boolean; txt: boolean; png: boolean };
+}
+export interface ProductionResult { file: string | null; srt: string | null; txt: string | null; png: string | null; seconds: number }
 export interface WhiteboardResult { file: string; seconds: number; timeline: string; remotion: string | null; remotionError: string; srt: string | null }
 
 export interface ExportResult { file: string; seconds: number; srt?: string | null; captioned?: string | null; captionError?: string }

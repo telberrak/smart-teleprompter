@@ -5,6 +5,7 @@ const fs = require("node:fs/promises");
 const voice = require("./voice.cjs");
 const takes = require("./takes.cjs");
 const media = require("./media.cjs");
+const production = require("./production.cjs");
 media.registerScheme();
 
 const isDev = process.argv.includes("--dev");
@@ -72,6 +73,7 @@ ipcMain.handle("script:save", async (_e, file, content) => {
 voice.register();
 takes.register();
 media.register();
+production.register();
 
 app.whenReady().then(() => {
   media.registerProtocol();

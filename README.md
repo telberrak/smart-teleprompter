@@ -28,6 +28,7 @@ Other commands:
 - **Prepare**: open a `1.x-whiteboard-script.md`, check it, and edit any sentence in place. Edits are saved straight to the file.
 - **Record**: the prompter. The current sentence sits on the eye line under the camera.
 - **Review**: takes by sentence. "Redo" jumps back to Record two sentences early for a run-up. (Sample takes until milestone 3.)
+- **Production**: assemble the finished video on a timeline, like CapCut, then polish and export.
 
 ### Record shortcuts
 
@@ -154,6 +155,27 @@ Picture a Monday morning at a bank. / The market opened one minute ago. [pause]
 
 Put your own course files in `samples/` to try them; that folder is not committed.
 
+## Production
+
+Production starts from Review's cut (your best take of each sentence, silences removed) and
+lays it out on seven lanes: titles, camera, slides, voice, music, sound effects and captions.
+
+- **Preview** plays the cut with slides, camera bubble, titles and captions drawn as they will export.
+- **Library**: Media (camera layouts), Text (title card, lower third, chapter, key term, end card),
+  Audio (your music, a whoosh or pop made by the app) and Brand (accent colour, name, course).
+- **Timeline**: click to seek, drag titles and sound effects (they snap to sentence starts),
+  `S` splits the selected clip at the playhead, `Delete` removes it, `Space` plays. "Fit" shows the whole video.
+- **Inspector**: change the selected clip, e.g. camera full screen or bubble for part of the video,
+  a slow zoom on a slide, music volume and ducking, caption style.
+- **Polish & export** runs pro checks first (camera bubble hiding slide text, slides on screen at
+  least 3 s, caption reading speed, intro under 8 s, overlapping titles) with one-click fixes, then writes:
+  - `NAME-final.mp4` 1920x1080, voice cleaned, music ducked under your voice, loudness −14 LUFS (or −16)
+  - `NAME-cut.srt` captions, `NAME-description.txt` with YouTube chapter timestamps
+  - `NAME-thumbnail.png` 1280x720 from the slide you pick, the lesson title and your face
+  - `NAME-production.json` so the edit can be reopened
+
+Use only music you own or have a licence for.
+
 ## Roadmap
 
 1. ✅ Prompter
@@ -162,13 +184,15 @@ Put your own course files in `samples/` to try them; that folder is not committe
 4. ✅ Re-record one sentence, keep the best take, FFmpeg cuts silences
 5. ✅ Captions (SRT) from the script, timed to your voice
 6. ✅ Diagrams in the final video: whiteboard MP4, plus a Remotion timeline and project
+7. ✅ Production: timeline editor, titles, music, pro checks, final MP4, chapters and thumbnail
+8. Next: a 60 s vertical Short (9:16) from key sentences
 
 ## Project layout
 
 ```
 electron/   main process and preload (file open/save)
 src/lib/    script parser and file bridge
-src/components/  Prepare, Record, Review screens
+src/components/  Prepare, Record, Review, Production screens
 src/sample/ sample script
 remotion-template/  Remotion project copied next to your takes on export
 ```

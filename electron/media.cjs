@@ -261,7 +261,7 @@ function registerScheme() {
 function registerProtocol() {
   protocol.handle("take", req => {
     const p = decodeURIComponent(new URL(req.url).pathname.slice(1));
-    if (!/\.(webm|mp4)$/i.test(p) || !fs.existsSync(p)) return new Response("not found", { status: 404 });
+    if (!/\.(webm|mp4|mp3|wav|m4a|aac|ogg|flac|png)$/i.test(p) || !fs.existsSync(p)) return new Response("not found", { status: 404 });
     return net.fetch(pathToFileURL(p).toString(), { headers: req.headers });
   });
 }
@@ -278,4 +278,4 @@ function register() {
   });
 }
 
-module.exports = { register, registerScheme, registerProtocol, ffmpeg, listTakes, exportCut, exportWhiteboard, whiteboardGraph, makeSeekable, findSilences };
+module.exports = { register, registerScheme, registerProtocol, ffmpeg, listTakes, exportCut, ensureCut, exportWhiteboard, whiteboardGraph, makeSeekable, findSilences };
