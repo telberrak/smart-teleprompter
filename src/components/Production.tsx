@@ -3,6 +3,7 @@ import type { Script } from "../lib/script";
 import type { SlideView } from "./ScreenCard";
 import { takes as io, mediaUrl, type ProductionResult } from "../lib/bridge";
 import { buildEdit, timeline, type Segment, type TakeInfo } from "../lib/edit";
+import { useReview } from "../lib/reviewState";
 import { cues, toSrt } from "../lib/captions";
 import { loadCorner, CORNERS, type Corner } from "../lib/bubble";
 import { bubblePngs, stepPng } from "../lib/slideImage";
@@ -45,8 +46,8 @@ export function Production({ script, view, scriptPath }: Props) {
   const [takes, setTakes] = useState<TakeInfo[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
-  const picks = useMemo<Record<number, number>>(() => store.get("tp.picks:" + scriptPath, {}), [scriptPath]);
-  const segs: Segment[] = useMemo(() => timeline(buildEdit(takes, S.length, picks)), [takes, S.length, picks]);
+  const { review, ready: reviewReady } = useReview(scriptPath);
+  const segs: Segment[] = useMemo(() => (reviewReady ? timeline(buildEdit(takes, S.length, review.picks, review.hidden)) : []), [takes, S.length, review, reviewReady]);
   const hasCamera = segs.some(s => s.video);
   const key = cutKey(segs);
   const [brand, setBrandRaw] = useState<Brand>(() => ({ ...DEFAULT_BRAND, ...store.get<Partial<Brand>>("tp.brand", {}) }));
@@ -254,6 +255,17 @@ export function Production({ script, view, scriptPath }: Props) {
     setShortFile(r.file);
   };
 
+  // Delete the video: exported files to the Recycle Bin, timeline back to the automatic one.
+  const deleteVideo = async () => {
+    if (!io || !prod) return;
+    const files = await io.productionFiles(scriptPath).catch(() => [] as string[]);
+    const names = files.map(f => f.split(/[\\/]/).pop()).join(", ");
+    if (!window.confirm(`Delete this video?\n\n${files.length ? `These go to the Recycle Bin: ${names}.\n\n` : ""}The timeline starts over (titles, music and your edits are removed). Your recordings and Review choices are kept.`)) return;
+    try { if (files.length) await io.deleteProduction(scriptPath); } catch (e) { setError(String((e as Error).message ?? e)); return; }
+    setResult(null); setShortFile(null); setSel(null); seek(0);
+    setProd(buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand }));
+  };
+
   const doExport = async () => {
     if (!io || !prod) return;
     setError(""); setResult(null); setShortFile(null); setProgress(0);
@@ -281,7 +293,7 @@ export function Production({ script, view, scriptPath }: Props) {
   };
 
   if (!io) return <section className="screen on" id="production"><div className="panel"><div className="ph"><h2>Production</h2></div><p className="pd-empty">Production works in the desktop app.</p></div></section>;
-  if (loaded && !segs.length) return <section className="screen on" id="production"><div className="panel"><div className="ph"><h2>Production</h2></div><p className="pd-empty">Record some sentences first: Production starts from Review’s cut.</p></div></section>;
+  if (loaded && reviewReady && !segs.length) return <section className="screen on" id="production"><div className="panel"><div className="ph"><h2>Production</h2></div><p className="pd-empty">Record some sentences first: Production starts from Review’s cut.</p></div></section>;
   if (!prod) return <section className="screen on" id="production"><div className="panel"><div className="ph"><h2>Production</h2></div><p className="pd-empty">{error || "Reading your takes…"}</p></div></section>;
 
   const total = prod.seconds;
@@ -414,6 +426,7 @@ export function Production({ script, view, scriptPath }: Props) {
         <span className="pd-spacer" />
         <label className="pd-zoom">Zoom<input type="range" min={1} max={60} step={0.5} value={zoom} onChange={e => { setZoom(+e.target.value); store.set("tp.zoom", +e.target.value); }} /></label>
         <button className={"btn ghost" + (!zoomSet ? " on" : "")} aria-pressed={!zoomSet} onClick={() => { setZoom(0); store.set("tp.zoom", 0); }}>Fit</button>
+        <button className="btn ghost danger" onClick={() => void deleteVideo()} title="Send the exported files to the Recycle Bin and start the timeline over">Delete video…</button>
         <button className="btn primary" onClick={() => setPane("export")}>Polish &amp; export →</button>
       </div>
       <div className="pd-scroll">

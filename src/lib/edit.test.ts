@@ -49,4 +49,18 @@ describe("buildEdit", () => {
     expect(buildEdit([redo, take1], 3)[1].chosen?.take).toBe(2);
     expect(buildEdit([take1, redo], 3, { 2: 1 })[1].chosen?.take).toBe(1);
   });
+  it("a chosen read holds until you record the sentence again; a locked one holds anyway", () => {
+    const redo: TakeInfo = { file: "take-02.webm", take: 2, seconds: 4, lag: 0, video: true, silences: [[0, 0.4], [3.1, 4]],
+      sentences: [{ sentence: 2, start: 0, text: "Two." }] };
+    expect(buildEdit([take1], 3)[1].reads.map(r => r.id)).toEqual(["1.1", "1.2"]);
+    expect(buildEdit([take1], 3, { 2: { read: "1.1", at: 1 } })[1].chosen?.start).toBe(3.5);
+    expect(buildEdit([take1, redo], 3, { 2: { read: "1.1", at: 1 } })[1].chosen?.take).toBe(2);
+    expect(buildEdit([take1, redo], 3, { 2: { read: "1.1", at: 1, locked: true } })[1].chosen?.id).toBe("1.1");
+    expect(buildEdit([take1, redo], 3, { 2: { read: "1.1", at: 2 } })[1].chosen?.id).toBe("1.1");
+  });
+  it("hidden reads are left out", () => {
+    const e = buildEdit([take1], 3, {}, ["2:1.2"]);
+    expect(e[1].reads.map(r => r.id)).toEqual(["1.1"]);
+    expect(e[1].chosen?.id).toBe("1.1");
+  });
 });

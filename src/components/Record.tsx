@@ -7,6 +7,7 @@ import { Words } from "./Words";
 import { EditableLine } from "./EditableLine";
 import { voice, takes, inElectron, type VoiceStatus } from "../lib/bridge";
 import { openCamera, startTake, type Mark, type Take } from "../lib/recorder";
+import { loadBg, saveBg, withBackground, type BgSettings } from "../lib/background";
 import { startMic, type Mic } from "../lib/mic";
 import { align, heardWords, norm } from "../lib/align";
 
@@ -82,7 +83,11 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
   const [cams, setCams] = useState<MediaDeviceInfo[]>([]);
   const [camId, setCamIdRaw] = useState(() => { try { return localStorage.getItem("tp.cam") ?? ""; } catch { return ""; } });
   const setCamId = (id: string) => { setCamIdRaw(id); try { localStorage.setItem("tp.cam", id); } catch { /* private window */ } };
+  const [rawCam, setRawCam] = useState<MediaStream | null>(null);
   const [camStream, setCamStream] = useState<MediaStream | null>(null);
+  const [bg, setBgRaw] = useState<BgSettings>(loadBg);
+  const setBg = (b: BgSettings) => { setBgRaw(b); saveBg(b); };
+  const [bgBusy, setBgBusy] = useState(false);
   const [lastTake, setLastTake] = useState<{ file: string; take: number } | null>(null);
   const [recording, setRecording] = useState(false);
   const takeRef = useRef<Take | null>(null);
@@ -228,10 +233,29 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
   useEffect(() => {
     if (!inElectron || camId === "off" || !navigator.mediaDevices) { setCamStream(null); return; }
     let st: MediaStream | null = null, gone = false;
-    openCamera(camId || undefined).then(x => { if (gone) x.getTracks().forEach(t => t.stop()); else { st = x; setCamStream(x); } })
-      .catch(err => { setCamStream(null); toast(`Camera not available: ${err?.message ?? err}`); });
+    openCamera(camId || undefined).then(x => { if (gone) x.getTracks().forEach(t => t.stop()); else { st = x; setRawCam(x); } })
+      .catch(err => { setRawCam(null); toast(`Camera not available: ${err?.message ?? err}`); });
     return () => { gone = true; st?.getTracks().forEach(t => t.stop()); };
   }, [camId, toast]);
+  // Background behind you: the processed camera is what you see and what gets recorded.
+  useEffect(() => {
+    if (!rawCam || bg.mode === "none" || (bg.mode === "image" && !bg.file)) { setCamStream(rawCam); return; }
+    let gone = false, stop: (() => void) | null = null;
+    setBgBusy(true);
+    (async () => {
+      let img: ImageBitmap | null = null;
+      if (bg.mode === "image" && bg.file && takes) {
+        const bytes = await takes.readBackground(bg.file);
+        if (!bytes) throw new Error("the background picture is missing; choose it again");
+        img = await createImageBitmap(new Blob([bytes as Uint8Array<ArrayBuffer>]));
+      }
+      const b = await withBackground(rawCam, bg.mode === "image" ? "image" : "blur", img);
+      if (gone) { b.stop(); return; }
+      stop = b.stop; setCamStream(b.stream);
+    })().catch(err => { if (!gone) { setCamStream(rawCam); toast(`Background not available: ${err?.message ?? err}`); } })
+      .finally(() => { if (!gone) setBgBusy(false); });
+    return () => { gone = true; stop?.(); };
+  }, [rawCam, bg, takes, toast]);
   useEffect(() => { if (camVideo.current) camVideo.current.srcObject = camStream; }, [camStream]);
 
   // Recording: every start (Space) is a new take, saved next to the script.
@@ -421,6 +445,20 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
                   <option value="off">No camera (audio only)</option>
                 </select>
               </label>
+              <label className="row" htmlFor="camb">Background
+                <select id="camb" className="micsel" value={bg.mode} disabled={recording || camId === "off"}
+                  onChange={async e => {
+                    const mode = e.target.value as BgSettings["mode"];
+                    if (mode === "image" && !bg.file) { const f = await takes!.pickBackground(); if (f) setBg({ mode, file: f }); return; }
+                    setBg({ ...bg, mode });
+                  }}>
+                  <option value="none">Your room (as is)</option>
+                  <option value="blur">Blurred room</option>
+                  <option value="image">Picture{bg.file ? `: ${bg.file.split(/[\\/]/).pop()}` : "…"}</option>
+                </select>
+              </label>
+              {bg.mode === "image" && <div className="row small">{bgBusy ? "Finding you in the picture…" : "Works best with even light and a plain wall behind you."}
+                <button className="btn ghost" disabled={recording} onClick={async () => { const f = await takes!.pickBackground(); if (f) setBg({ mode: "image", file: f }); }}>Change picture</button></div>}
               <label className="row" htmlFor="camcorner">Camera bubble
                 <select id="camcorner" className="micsel" value={corner} onChange={e => isCorner(e.target.value) && setCorner(e.target.value)}>
                   {CORNERS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}

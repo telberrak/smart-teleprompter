@@ -1,6 +1,7 @@
 import type { Segment, TakeInfo } from "./edit";
 import type { Timeline } from "./storyboard";
 import type { Production } from "./production";
+import type { ReviewState } from "./edit";
 import type { ShortPiece, SHORT_LAYOUT } from "./short";
 // Access to the Electron main process (see electron/preload.cjs).
 // In a plain browser (npm run web) these fall back to file pickers and in-memory saving.
@@ -36,6 +37,13 @@ export interface TakesBridge {
   chunk(id: number, data: ArrayBuffer): Promise<boolean>;
   end(id: number, meta: unknown): Promise<{ file: string; json: string; bytes: number } | null>;
   reveal(file: string): Promise<void>;
+  /** Choose a background picture (copied into the app's folder); its path, or null. */
+  pickBackground(): Promise<string | null>;
+  readBackground(file: string): Promise<Uint8Array | null>;
+  /** Send take files (and their timings) to the Recycle Bin. */
+  remove(scriptPath: string | null, files: string[]): Promise<boolean>;
+  getReview(scriptPath: string | null): Promise<(ReviewState & { lastTake?: number }) | null>;
+  setReview(scriptPath: string | null, state: ReviewState): Promise<boolean>;
   list(scriptPath: string | null): Promise<{ dir: string; takes: (TakeInfo & { error?: string })[] }>;
   exportCut(scriptPath: string | null, segs: Segment[], opts?: { srt?: string; burn?: boolean }): Promise<ExportResult>;
   exportWhiteboard(scriptPath: string | null, segs: Segment[], opts: WhiteboardOptions): Promise<WhiteboardResult>;
@@ -43,6 +51,10 @@ export interface TakesBridge {
   productionCut(scriptPath: string | null, segs: Segment[]): Promise<{ file: string; seconds: number }>;
   pickMusic(): Promise<string | null>;
   exportProduction(scriptPath: string | null, segs: Segment[], opts: ProductionOptions): Promise<ProductionResult>;
+  /** Files Production has written for this script. */
+  productionFiles(scriptPath: string | null): Promise<string[]>;
+  /** Send them to the Recycle Bin. */
+  deleteProduction(scriptPath: string | null): Promise<string[]>;
   exportShort(scriptPath: string | null, segs: Segment[], opts: ShortOptions): Promise<{ file: string; seconds: number }>;
   onExportProgress(cb: (p: number) => void): () => void;
 }

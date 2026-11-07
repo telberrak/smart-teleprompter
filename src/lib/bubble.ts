@@ -5,8 +5,9 @@ export const CORNERS: { id: Corner; label: string }[] = [
   { id: "tl", label: "Top left" }, { id: "tr", label: "Top right" },
   { id: "bl", label: "Bottom left" }, { id: "br", label: "Bottom right" },
 ];
-export const DEFAULT_CORNER: Corner = "br";
-const KEY = "tp.bubble";
+export const DEFAULT_CORNER: Corner = "bl";
+// v2: the default moved to bottom left; an older saved corner is not carried over.
+const KEY = "tp.bubble.v2";
 export const isCorner = (c: unknown): c is Corner => c === "tl" || c === "tr" || c === "bl" || c === "br";
 export function loadCorner(): Corner {
   try { const v = localStorage.getItem(KEY); return isCorner(v) ? v : DEFAULT_CORNER; } catch { return DEFAULT_CORNER; }

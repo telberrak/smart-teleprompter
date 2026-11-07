@@ -19,7 +19,21 @@ export interface TakeInfo {
   silences: [number, number][];
 }
 
-export interface Segment { sentence: number; take: number; file: string; video: boolean; start: number; end: number; text: string }
+export interface Segment {
+  sentence: number; take: number; file: string; video: boolean; start: number; end: number; text: string;
+  /** Which read this is: "<take>.<n>", the n-th read of the sentence in that take (from 1). */
+  id?: string;
+}
+
+/**
+ * Your choice for one sentence. An unlocked choice holds until you record the sentence again
+ * (the newer read then wins, as when you redo it); a locked one holds whatever you record later.
+ */
+export interface Pick { read: string; locked?: boolean; /** Highest take number when you chose. */ at: number }
+
+/** What you decided in Review, saved next to the takes. Old saves hold a bare take number. */
+export interface ReviewState { picks: Record<number, Pick | number>; hidden: string[] }
+export const emptyReview = (): ReviewState => ({ picks: {}, hidden: [] });
 
 const PAD_START = 0.1;
 const PAD_END = 0.25;
@@ -68,18 +82,24 @@ export interface SentenceEdit {
 }
 
 /**
- * For sentences 1..count: every read, and the one to use (the latest, unless `picks` names
- * a take for that sentence).
+ * For sentences 1..count: every read, and the one to use: the latest, unless you chose
+ * another (see Pick). Hidden reads are left out (they stay in the take file).
  */
-export function buildEdit(takes: TakeInfo[], count: number, picks: Record<number, number> = {}): SentenceEdit[] {
+export function buildEdit(takes: TakeInfo[], count: number, picks: ReviewState["picks"] = {}, hidden: string[] = []): SentenceEdit[] {
   const reads = new Map<number, Segment[]>();
+  const gone = new Set(hidden);
   for (const t of [...takes].sort((a, b) => a.take - b.take)) {
+    const seen = new Map<number, number>();
     for (const m of t.sentences) {
       if (m.sentence < 1 || m.sentence > count) continue;
       const { start, end } = cutPoints(t, m);
       if (end - start < 0.4) continue; // passed over too fast to be a real read
+      const k = (seen.get(m.sentence) ?? 0) + 1;
+      seen.set(m.sentence, k);
+      const id = `${t.take}.${k}`;
+      if (gone.has(`${m.sentence}:${id}`)) continue;
       const list = reads.get(m.sentence) ?? [];
-      list.push({ sentence: m.sentence, take: t.take, file: t.file, video: t.video, start, end, text: m.text });
+      list.push({ sentence: m.sentence, take: t.take, file: t.file, video: t.video, start, end, text: m.text, id });
       reads.set(m.sentence, list);
     }
   }
@@ -87,11 +107,19 @@ export function buildEdit(takes: TakeInfo[], count: number, picks: Record<number
   for (let n = 1; n <= count; n++) {
     const r = reads.get(n) ?? [];
     const pick = picks[n];
-    const chosen = (pick !== undefined ? [...r].reverse().find(x => x.take === pick) : undefined) ?? r.at(-1) ?? null;
-    out.push({ sentence: n, reads: r, chosen });
+    let chosen: Segment | undefined;
+    if (typeof pick === "number") chosen = [...r].reverse().find(x => x.take === pick);
+    else if (pick) {
+      const x = r.find(y => y.id === pick.read);
+      if (x && (pick.locked || !r.some(y => y.take > pick.at))) chosen = x;
+    }
+    out.push({ sentence: n, reads: r, chosen: chosen ?? r.at(-1) ?? null });
   }
   return out;
 }
+
+/** The key a hidden read is saved under. */
+export const hiddenKey = (s: Segment) => `${s.sentence}:${s.id}`;
 
 /** The segments of the final video, in script order. */
 export const timeline = (edit: SentenceEdit[]): Segment[] => edit.flatMap(e => (e.chosen ? [e.chosen] : []));

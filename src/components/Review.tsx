@@ -6,7 +6,8 @@ import { buildTimeline, slideSteps } from "../lib/storyboard";
 import { bubblePngs, stepPng } from "../lib/slideImage";
 import { CORNERS, isCorner, loadCorner, saveCorner, type Corner } from "../lib/bubble";
 import { cues, toSrt } from "../lib/captions";
-import { buildEdit, timeline, totalSeconds, type Segment, type TakeInfo } from "../lib/edit";
+import { buildEdit, emptyReview, hiddenKey, timeline, totalSeconds, type Pick, type Segment, type TakeInfo } from "../lib/edit";
+import { useReview } from "../lib/reviewState";
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
@@ -21,9 +22,7 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
   const [takes, setTakes] = useState<(TakeInfo & { error?: string })[]>([]);
   const [dir, setDir] = useState("");
   const [loading, setLoading] = useState(false);
-  const [picks, setPicks] = useState<Record<number, number>>(() => {
-    try { return JSON.parse(localStorage.getItem("tp.picks:" + scriptPath) ?? "{}"); } catch { return {}; }
-  });
+  const { review, update: setReview } = useReview(scriptPath);
   const [sel, setSel] = useState<number | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [result, setResult] = useState<ExportResult | null>(null);
@@ -46,10 +45,45 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
     finally { setLoading(false); }
   }, [scriptPath]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { try { localStorage.setItem("tp.picks:" + scriptPath, JSON.stringify(picks)); } catch { /* private window */ } }, [picks, scriptPath]);
   useEffect(() => io?.onExportProgress(setProgress), []);
 
-  const edit = useMemo(() => buildEdit(takes, S.length, picks), [takes, S.length, picks]);
+  const edit = useMemo(() => buildEdit(takes, S.length, review.picks, review.hidden), [takes, S.length, review]);
+  const lastTake = takes.reduce((a, t) => Math.max(a, t.take), 0);
+  const pickOf = (n: number): Pick | undefined => { const p = review.picks[n]; return typeof p === "object" ? p : undefined; };
+  const lockedOf = (i: number) => { const p = pickOf(i + 1), c = edit[i]?.chosen; return !!(p?.locked && c && c.id === p.read); };
+  const use = (r: Segment) => setReview(s => ({ ...s, picks: { ...s.picks, [r.sentence]: { read: r.id!, at: lastTake, locked: lockedOf(r.sentence - 1) } } }));
+  const toggleLock = (i: number) => {
+    const c = edit[i]?.chosen;
+    if (!c) return;
+    const on = !lockedOf(i);
+    setReview(s => ({ ...s, picks: { ...s.picks, [i + 1]: { read: c.id!, at: lastTake, locked: on } } }));
+  };
+  const lockAll = (on: boolean) => setReview(s => {
+    const picks = { ...s.picks };
+    edit.forEach((e, i) => { if (e.chosen) picks[i + 1] = { read: e.chosen.id!, at: lastTake, locked: on }; });
+    return { ...s, picks };
+  });
+  const hide = (r: Segment) => setReview(s => {
+    const picks = { ...s.picks };
+    const p = picks[r.sentence];
+    if (typeof p === "object" && p.read === r.id) delete picks[r.sentence];
+    return { ...s, picks, hidden: [...s.hidden, hiddenKey(r)] };
+  });
+  const unhide = (n: number) => setReview(s => ({ ...s, hidden: s.hidden.filter(h => !h.startsWith(n + ":")) }));
+  const hiddenCount = (n: number) => review.hidden.filter(h => h.startsWith(n + ":")).length;
+  const resetAll = async () => {
+    if (!window.confirm("Reset all choices? Every sentence goes back to its latest read, locks are removed and hidden reads come back. Your recordings are kept.")) return;
+    setReview(() => emptyReview());
+    if (io && takes.length && window.confirm(`Also delete all ${takes.length} recordings of this script? They go to the Recycle Bin.`)) {
+      try { await io.remove(scriptPath, takes.map(t => t.file)); } catch (e) { setError(String((e as Error).message ?? e)); }
+      void load();
+    }
+  };
+  const deleteTake = async (t: TakeInfo) => {
+    if (!io || !window.confirm(`Delete take ${t.take} (${fmt(t.seconds)})? It goes to the Recycle Bin; sentences recorded in it fall back to their other reads.`)) return;
+    try { await io.remove(scriptPath, [t.file]); } catch (e) { setError(String((e as Error).message ?? e)); }
+    void load();
+  };
   const segs = useMemo(() => timeline(edit), [edit]);
   const recorded = segs.length;
   const rawSeconds = takes.reduce((a, t) => a + t.seconds, 0);
@@ -115,7 +149,13 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
             {io ? <>{takes.length} take{takes.length === 1 ? "" : "s"} · {recorded} of {S.length} sentences recorded <button className="linkbtn" onClick={() => void load()} disabled={loading}>{loading ? "reading takes…" : "refresh"}</button></> : "recording and review work in the desktop app"}
           </span>
         </div>
-        <div className="tl-head"><span className="label">#</span><span className="label">Sentence</span><span className="label">Reads (★ = used)</span><span className="label">Fix</span></div>
+        <div className="rv-tools">
+          <button className="btn ghost" onClick={() => lockAll(true)} disabled={!recorded}>🔒 Lock all</button>
+          <button className="btn ghost" onClick={() => lockAll(false)} disabled={!recorded}>🔓 Unlock all</button>
+          <span className="pd-spacer" />
+          <button className="btn ghost danger" onClick={() => void resetAll()}>Reset all…</button>
+        </div>
+        <div className="tl-head"><span className="label">#</span><span className="label">Sentence</span><span className="label">Reads (★ used, 🔒 locked, × hide)</span><span className="label">Lock</span><span className="label">Fix</span></div>
         <div className="tl">
           {S.map((s, i) => {
             const e = edit[i];
@@ -126,16 +166,25 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
                 <div className="takes">
                   {e?.reads.map((r, j) => {
                     const used = e.chosen === r;
+                    const lk = used && lockedOf(i);
+                    const same = e.reads.filter(x => x.take === r.take);
                     return (
-                      <button key={j} className={"take" + (used ? " best" : "")} title={`Take ${r.take}, ${r.start.toFixed(1)}–${r.end.toFixed(1)} s · click to use and play`}
-                        onClick={() => { setPicks(p => ({ ...p, [i + 1]: r.take })); play([r]); }}>
-                        <span className="tm"><span>T{r.take}{e.reads.filter(x => x.take === r.take).length > 1 ? `·${e.reads.filter(x => x.take === r.take).indexOf(r) + 1}` : ""}{used && <span className="star"> ★</span>}</span><span>{(r.end - r.start).toFixed(1)}s</span></span>
-                      </button>
+                      <span key={j} className={"take" + (used ? " best" : "") + (lk ? " locked" : "")}>
+                        <button className="pick" title={`Take ${r.take}, ${r.start.toFixed(1)}–${r.end.toFixed(1)} s · click to use and play`}
+                          onClick={() => { use(r); play([r]); }}>
+                          <span className="tm"><span>T{r.take}{same.length > 1 ? `·${same.indexOf(r) + 1}` : ""}{used && <span className="star"> {lk ? "🔒" : "★"}</span>}</span><span>{(r.end - r.start).toFixed(1)}s</span></span>
+                        </button>
+                        {!lk && <button className="x" title="Hide this read (the take file is kept)" aria-label={`Hide read T${r.take}`} onClick={() => hide(r)}>×</button>}
+                      </span>
                     );
                   })}
                   {!e?.reads.length && <span className="none">not recorded yet</span>}
+                  {hiddenCount(i + 1) > 0 && <button className="linkbtn" onClick={() => unhide(i + 1)}>show {hiddenCount(i + 1)} hidden</button>}
                 </div>
-                <button className="rr" onClick={() => onRedo(i)} title="Record this sentence again"><i />Redo</button>
+                <button className={"lk" + (lockedOf(i) ? " on" : "")} onClick={() => toggleLock(i)} disabled={!e?.chosen} aria-pressed={lockedOf(i)}
+                  title={lockedOf(i) ? "Locked: this read stays chosen, even after you record the sentence again. Click to unlock." : "Lock the chosen read so it stays chosen after a restart or a new recording"}>
+                  {lockedOf(i) ? "🔒" : "🔓"}</button>
+                <button className="rr" onClick={() => onRedo(i)} title={lockedOf(i) ? "Record this sentence again (it is locked: unlock to use the new read)" : "Record this sentence again"}><i />Redo</button>
               </div>
             );
           })}
@@ -182,6 +231,15 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
           {wb?.remotion && <span className="small-note">In that folder: <code>npm install</code>, then <code>npm run studio</code> to edit or <code>npm run render</code>.</span>}
           {wb?.remotionError && <div className="vsetup err">Remotion project failed: {wb.remotionError}</div>}
           {error && <div className="vsetup err">{error}</div>}
+          <span className="label">Recordings</span>
+          <div className="rv-takes">
+            {[...takes].sort((a, b) => a.take - b.take).map(t => (
+              <div key={t.file} className="out"><span className="ext">T{t.take}</span><span className="f" title={t.file}>{fmt(t.seconds)} · {new Set(t.sentences.map(m => m.sentence)).size} sentences{t.error ? " · " + t.error : ""}</span>
+                <button className="linkbtn" onClick={() => void io?.reveal(t.file)}>Show</button>
+                <button className="linkbtn danger" onClick={() => void deleteTake(t)}>Delete</button></div>
+            ))}
+            {!takes.length && <span className="small-note">No recordings yet.</span>}
+          </div>
           {dir && <span className="small-note">Takes folder: {dir}</span>}
         </div>
       </div>

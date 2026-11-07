@@ -80,11 +80,24 @@ Takes go to `takes/<script name>/` next to the script, e.g.
 The audio is recorded raw (no noise suppression or auto gain) from the microphone chosen under
 Voice. With voice following, sentence times trail your voice by `follow.lagSeconds`.
 
+**Background** (Recording panel): your room as is, a blurred room, or a picture of your choice
+behind you. The app finds you in each frame with MediaPipe's selfie segmenter (the model ships in
+`public/models`, nothing is downloaded) and records the result. Even light and a plain wall help.
+The camera bubble starts in the bottom-left corner.
+
 ## Review, redo and export
 
 **Review** lists every sentence with each read found in your takes (T1, T2·2 = take 2, second
 read…). The **last read wins** (★), so fluff, say it again, carry on. Click another read to use it
 instead (and to play it). **Redo** jumps to Record at that sentence; the new take replaces it.
+
+- **🔒 Lock** keeps the chosen read, even after a restart or a new recording of that sentence.
+  An unlocked choice holds until you record the sentence again. **Lock all / Unlock all** at the top.
+- **×** hides a bad read (the take file is kept; "show hidden" brings it back).
+- **Recordings** (right): show or delete a whole take; deleted takes go to the Recycle Bin.
+- **Reset all…** clears choices, locks and hidden reads, and can also delete all recordings.
+
+Choices are saved in `takes/<script>/review.json`, next to the takes.
 
 Cut points come from the sentence times in each take, shifted back by the voice-following lag
 and snapped to the nearest silence (FFmpeg `silencedetect`, −35 dB, 0.2 s). **Export MP4** writes
@@ -167,6 +180,8 @@ lays it out on seven lanes: titles, camera, slides, voice, music, sound effects 
   `S` splits the selected clip at the playhead, `Delete` removes it, `Space` plays. "Fit" shows the whole video.
 - **Inspector**: change the selected clip, e.g. camera full screen or bubble for part of the video,
   a slow zoom on a slide, music volume and ducking, caption style.
+- **Delete video…** sends the exported files to the Recycle Bin and starts the timeline over
+  (recordings and Review choices are kept).
 - **Polish & export** runs pro checks first (camera bubble hiding slide text, slides on screen at
   least 3 s, caption reading speed, intro under 8 s, overlapping titles) with one-click fixes, then writes:
   - `NAME-final.mp4` 1920x1080, voice cleaned, music ducked under your voice, loudness −14 LUFS (or −16)
