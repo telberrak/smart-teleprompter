@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { takes as io, type ProductionResult } from "./bridge";
 
-export type JobKind = "production" | "cut" | "whiteboard";
+export type JobKind = "production" | "cut" | "whiteboard" | "build";
 export interface ExportJob {
   kind: JobKind;
   scriptPath: string | null;

@@ -112,14 +112,16 @@ export function App() {
   const job = useExportJob();
   const wasRunning = useRef(false);
   useEffect(() => {
-    const home = job?.kind === "production" ? "production" : "review";
+    const home = job?.kind === "production" || job?.kind === "build" ? "production" : "review";
     const file = job?.result?.file ?? (job?.data as { file?: string } | undefined)?.file;
     if (wasRunning.current && job && !job.running && screen !== home)
-      setNote(job.error ? `Export failed: open ${home === "production" ? "Production" : "Review"} to see why` : `Exported ${file?.split(/[\\/]/).pop() ?? "your files"}`);
+      setNote(job.kind === "build" ? (job.error ? "Building the cut failed: open Production to see why" : "Cut built: open Production to see it")
+        : job.error ? `Export failed: open ${home === "production" ? "Production" : "Review"} to see why` : `Exported ${file?.split(/[\\/]/).pop() ?? "your files"}`);
     wasRunning.current = !!job?.running;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job]);
 
+  const jobHome = job?.kind === "production" || job?.kind === "build" ? "production" : "review";
   if (restoring) return <div className="app"><p className="restoring">Opening {lastSession()?.path?.split(/[\\/]/).pop() ?? "your last script"}…</p></div>;
 
   return (
@@ -135,9 +137,9 @@ export function App() {
             </button>
           ))}
         </nav>
-        {job && screen !== (job.kind === "production" ? "production" : "review") && (job.running || job.result || job.data || job.error) && (
-          <button className={"jobchip" + (job.error ? " err" : job.running ? "" : " done")} onClick={() => setScreen(job.kind === "production" ? "production" : "review")} title={job.kind === "production" ? "Open Production" : "Open Review"}>
-            {job.running ? `${job.stage}${job.stage === "Exporting" ? ` ${Math.round(job.progress * 100)}%` : "…"}` : job.error ? "Export failed" : "✓ Export done"}
+        {job && screen !== jobHome && (job.running || job.result || job.data || job.error) && (
+          <button className={"jobchip" + (job.error ? " err" : job.running ? "" : " done")} onClick={() => setScreen(jobHome)} title={jobHome === "production" ? "Open Production" : "Open Review"}>
+            {job.running ? `${job.stage}${job.stage === "Exporting" || job.kind === "build" ? ` ${Math.round(job.progress * 100)}%` : "…"}` : job.kind === "build" ? (job.error ? "Build failed" : "✓ Cut built") : job.error ? "Export failed" : "✓ Export done"}
           </button>)}
         <span className="offline">Offline</span>
       </header>

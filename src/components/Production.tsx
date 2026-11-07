@@ -60,7 +60,6 @@ export function Production({ script, view, scriptPath }: Props) {
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [cut, setCut] = useState<{ file: string; seconds: number; version?: number } | null>(null);
-  const [progress, setProgress] = useState<number | null>(null);
   const [tab, setTab] = useState<"media" | "text" | "audio" | "brand">("text");
   const [pane, setPane] = useState<"edit" | "export">("edit");
   const [zoomSet, setZoom] = useState(() => store.get("tp.zoom", 0)); // px per second; 0 = fit the video to the width
@@ -138,7 +137,6 @@ export function Production({ script, view, scriptPath }: Props) {
   }, [scriptPath]);
   // Nothing is built on its own: the cut and the timeline are rebuilt only when you click.
   const [cutState, setCutState] = useState<"checking" | "fresh" | "stale" | "missing">("checking");
-  const [building, setBuilding] = useState(false);
   useEffect(() => {
     if (!loaded || !segs.length) return;
     const saved = store.get<Prod | null>("tp.prod:" + scriptPath, null);
@@ -161,22 +159,30 @@ export function Production({ script, view, scriptPath }: Props) {
     }).catch(() => setCutState("missing"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, key, scriptPath]);
-  const busy = useRef(false);
-  useEffect(() => io?.onExportProgress(x => { if (busy.current) setProgress(x); }), []);
+  // Building the cut runs as a background job, so it keeps going when you switch tabs;
+  // the result is applied here when it ends (or when you come back to this tab).
+  const building = !!(job && job.kind === "build" && job.scriptPath === scriptPath && job.running);
+  const progress = building ? job!.progress : null;
   const sKey = useMemo(() => scriptKey(script), [script]);
   const scriptChanged = !!prod?.scriptKey && prod.scriptKey !== sKey;
   const needsRebuild = !!prod && (prod.cutKey !== key || scriptChanged || cutState === "stale" || cutState === "missing");
-  const doRebuild = async () => {
-    if (!io || !prod || busy.current || exportJob.get()?.running) return;
-    busy.current = true; setBuilding(true); setProgress(0); setError("");
-    try {
-      const c = await io.productionCut(scriptPath, segs);
-      setCut(c); setCutState("fresh");
-      if (prod.cutKey !== key || scriptChanged) setProd(q => refit(q, buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand: q.brand })));
-    } catch (e) { setError(String((e as Error).message ?? e)); }
-    finally { busy.current = false; setBuilding(false); setProgress(null); }
+  const startBuild = (reset: boolean) => {
+    if (!io) return;
+    const path = scriptPath;
+    exportJob.start(path, "build", "Building the cut");
+    io.productionCut(path, segs)
+      .then(c => exportJob.set({ running: false, progress: 1, stage: "Done", data: { cut: c, reset } }))
+      .catch(e => exportJob.set({ running: false, stage: "Failed", error: String((e as Error).message ?? e) }));
   };
-
+  const doRebuild = () => {
+    if (!io || !prod || exportJob.get()?.running) return;
+    setError(""); startBuild(false);
+  };
+  const resetTimeline = () => {
+    setProd(buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand: prod?.brand ?? brand }));
+    setSel(null); seek(0);
+    setRebuilt(`Done: timeline rebuilt from your cut (${segs.length} sentences, ${fmt(segs.reduce((a, x) => a + x.end - x.start, 0))}).`);
+  };
   // Slide pictures, drawn once per step (the same pictures the export uses).
   useEffect(() => {
     if (!prod) return;
@@ -309,20 +315,25 @@ export function Production({ script, view, scriptPath }: Props) {
   // Start the timeline over from the cut (building the cut first when it is missing or out of date).
   const [rebuilt, setRebuilt] = useState("");
   useEffect(() => { if (!rebuilt) return; const id = setTimeout(() => setRebuilt(""), 6000); return () => clearTimeout(id); }, [rebuilt]);
-  const rebuild = async () => {
-    if (!segs.length || busy.current || exportJob.get()?.running) return;
+  const rebuild = () => {
+    if (!segs.length || exportJob.get()?.running) return;
     if (!window.confirm("Start the timeline over from your cut?\n\nTitles, music and your edits are removed; your brand kit is kept.")) return;
     setRebuilt(""); setError("");
-    if (io && (cutState === "stale" || cutState === "missing")) {
-      busy.current = true; setBuilding(true); setProgress(0);
-      try { const c = await io.productionCut(scriptPath, segs); setCut(c); setCutState("fresh"); }
-      catch (e) { setError(String((e as Error).message ?? e)); return; }
-      finally { busy.current = false; setBuilding(false); setProgress(null); }
-    }
-    setProd(buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand }));
-    setSel(null); seek(0);
-    setRebuilt(`Done: timeline rebuilt from your cut (${segs.length} sentences, ${fmt(segs.reduce((a, x) => a + x.end - x.start, 0))}).`);
+    if (io && (cutState === "stale" || cutState === "missing")) { startBuild(true); return; }
+    resetTimeline();
   };
+  // A finished build for this script: take the new cut, then refit or reset the timeline.
+  useEffect(() => {
+    if (!job || job.kind !== "build" || job.scriptPath !== scriptPath || job.running || !loaded || !prod) return;
+    if (job.error) { setError(job.error); exportJob.clear(); return; }
+    const d = job.data as { cut: typeof cut; reset: boolean } | undefined;
+    exportJob.clear();
+    if (!d) return;
+    setCut(d.cut); setCutState("fresh");
+    if (d.reset) resetTimeline();
+    else if (prod.cutKey !== key || scriptChanged) setProd(q => refit(q, buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand: q.brand })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job, loaded, !!prod]);
 
   // Timeline dragging: titles and sound effects move, snapping to sentence edges.
   const points = useMemo(() => {
