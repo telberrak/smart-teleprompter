@@ -551,7 +551,9 @@ export function Production({ script, view, scriptPath }: Props) {
       slides.push(slidePngs.get(p.step)!);
     }
     const voice = clipsOn(prod, "voice")[0];
-    const ass = shortAss(shortCues(pieces, n => S[n - 1]?.spoken ?? ""), { accent: prod.brand.accent, y: captionYAt(pieces, hasCamera), stressed: stressedWords(script, shortPicks) });
+    // Captions turned off (style Off, or the lane hidden) stay off in the Short too.
+    const capOn = (clipsOn(live ?? prod, "captions")[0]?.style ?? "clean") !== "off";
+    const ass = !capOn ? undefined : shortAss(shortCues(pieces, n => S[n - 1]?.spoken ?? ""), { accent: prod.brand.accent, y: captionYAt(pieces, hasCamera), stressed: stressedWords(script, shortPicks) });
     const r = await io.exportShort(scriptPath, segs, {
       pieces, layout: SHORT_LAYOUT, background: "0x0c0f14", loudness: voice?.loudness ?? -14, clean: voice?.clean ?? true,
       slides, header: await shortHeaderPng(prod.title, prod.brand), ass,

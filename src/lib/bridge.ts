@@ -94,7 +94,7 @@ export interface ShortOptions {
   slides: (Uint8Array | null)[];
   /** Transparent 1080x1920 PNG laid over everything (title band). */
   header: Uint8Array;
-  ass: string;
+  ass?: string;
 }
 export interface ProductionResult { file: string | null; srt: string | null; txt: string | null; png: string | null; seconds: number }
 export interface WhiteboardResult { file: string; seconds: number; timeline: string; remotion: string | null; remotionError: string; srt: string | null }

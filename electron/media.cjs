@@ -117,8 +117,7 @@ async function exportCut(scriptPath, segs, onProgress, opts = {}) {
   // Captions: an .srt next to the video, and optionally a copy with them burnt in.
   let srt = null, captioned = null, captionError = "";
   if (opts.srt) {
-    srt = out.replace(/\.mp4$/, ".srt");
-    fs.writeFileSync(srt, opts.srt);
+    srt = writeSrt(out, opts.srt);
     if (opts.burn) {
       captioned = out.replace(/\.mp4$/, "-captioned.mp4");
       const style = "FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=2,Shadow=0,MarginV=40";
@@ -138,6 +137,17 @@ const timeOf = line => { const m = /time=(\d+):(\d+):([\d.]+)/.exec(line); retur
 // Same pieces of the same files, in the same order (other fields, like a read's id, do not change the video).
 const cutShape = list => JSON.stringify((list || []).map(s => [path.basename(s.file), +(+s.start).toFixed(3), +(+s.end).toFixed(3)]));
 const sameSegs = (a, b) => cutShape(a) === cutShape(b);
+
+/**
+ * The captions file for a cut. Not named like the video (NAME-cut.srt): VLC and the Windows players
+ * load a same-named .srt on their own, so the captions looked burnt in even with them turned off.
+ */
+function writeSrt(out, text) {
+  const file = out.replace(/(-cut)?\.mp4$/, "-captions.srt");
+  fs.writeFileSync(file, text);
+  try { fs.unlinkSync(out.replace(/\.mp4$/, ".srt")); } catch { /* none from an older version */ }
+  return file;
+}
 
 /** Is there a cut for these segments already? Never builds anything. */
 function cutStatus(scriptPath, segs) {
@@ -159,8 +169,7 @@ async function ensureCut(scriptPath, segs, onProgress, srt) {
   try {
     const prev = JSON.parse(fs.readFileSync(json, "utf8"));
     if (fs.existsSync(out) && sameSegs(prev.segments, segs)) {
-      const srtFile = srt ? out.replace(/\.mp4$/, ".srt") : null;
-      if (srtFile) fs.writeFileSync(srtFile, srt);
+      const srtFile = srt ? writeSrt(out, srt) : null;
       return { file: out, seconds: prev.seconds, srt: srtFile };
     }
   } catch { /* no previous cut */ }

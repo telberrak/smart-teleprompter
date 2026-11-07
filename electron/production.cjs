@@ -341,7 +341,7 @@ async function exportShort(scriptPath, segs, onProgress, opts) {
 function productionFiles(scriptPath) {
   const dir = takesDir(scriptPath), base = baseName(scriptPath);
   // The cut too, so the next build starts from your takes.
-  return [`${base}-cut.mp4`, `${base}-cut.json`, `${base}-cut.srt`, `${base}-final.mp4`, `${base}-short.mp4`, `${base}-thumbnail.png`, `${base}-description.txt`, `${base}-production.json`, `${base}-production`, `${base}-short`]
+  return [`${base}-cut.mp4`, `${base}-cut.json`, `${base}-cut.srt`, `${base}-captions.srt`, `${base}-final.mp4`, `${base}-short.mp4`, `${base}-thumbnail.png`, `${base}-description.txt`, `${base}-production.json`, `${base}-production`, `${base}-short`]
     .map(f => path.join(dir, f)).filter(f => fs.existsSync(f));
 }
 
