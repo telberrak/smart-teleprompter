@@ -45,6 +45,8 @@ function clipLabel(c: Clip): string {
  * Production: the finished lesson on a timeline. Built from Review's cut the first time,
  * then edited here: titles, camera layout, slide motion, music, sound effects, captions.
  */
+let lastPane: "edit" | "export" = "edit";
+
 export function Production({ script, view, scriptPath }: Props) {
   const S = script.sentences;
   const [takes, setTakes] = useState<TakeInfo[]>([]);
@@ -62,7 +64,12 @@ export function Production({ script, view, scriptPath }: Props) {
   const [playing, setPlaying] = useState(false);
   const [cut, setCut] = useState<{ file: string; seconds: number; version?: number } | null>(null);
   const [tab, setTab] = useState<"media" | "text" | "audio" | "brand">("text");
-  const [pane, setPane] = useState<"edit" | "export">("edit");
+  // Remembered across tabs: coming back during (or after) an export shows Polish & export again.
+  const [pane, setPaneState] = useState<"edit" | "export">(() => {
+    const j = exportJob.get();
+    return j && j.kind === "production" && j.scriptPath === scriptPath ? "export" : lastPane;
+  });
+  const setPane = (x: "edit" | "export") => { lastPane = x; setPaneState(x); };
   const [zoomSet, setZoom] = useState(() => store.get("tp.zoom", 0)); // px per second; 0 = fit the video to the width
   const lanesRef = useRef<HTMLDivElement>(null);
   const [laneW, setLaneW] = useState(900);
@@ -79,7 +86,7 @@ export function Production({ script, view, scriptPath }: Props) {
   const mine = job && job.kind === "production" && job.scriptPath === scriptPath ? job : null;
   const result = mine?.result ?? null;
   const exporting = !!mine?.running;
-  const [outs, setOuts] = useState(() => store.get("tp.outs", { mp4: true, srt: true, txt: true, png: true, short: false }));
+  const [outs, setOuts] = useState(() => store.get("tp.outs.v2", { mp4: true, srt: false, txt: true, png: false, short: false }));
   const shortFile = mine?.short ?? null;
   const [thumb, setThumb] = useState<{ step: number; at: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -579,7 +586,7 @@ export function Production({ script, view, scriptPath }: Props) {
     if (!io || !prod || exportJob.get()?.running) return;
     if (needsRebuild) { setError("Your cut changed in Review: rebuild it (Preview) before exporting."); return; }
     setError(""); exportJob.start(scriptPath);
-    store.set("tp.outs", outs);
+    store.set("tp.outs.v2", outs);
     try {
       const prod = live!; // hidden or muted lanes left out
       // The thumbnail's slide first: the preview's pictures go away if you leave this screen.
