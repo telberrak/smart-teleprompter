@@ -20,7 +20,7 @@ interface Props {
   scriptPath: string | null;
 }
 
-const EYE_LINE = 140; // px from the top of the prompter: just under the camera
+const EYE_LINE = 0.4; // the current sentence sits 40% of the way down the prompter (earlier text stays visible above)
 const WB_EYE_LINE = 64; // whiteboard mode: first line under the slide, one faded line above
 
 type Mode = "prompter" | "whiteboard";
@@ -108,6 +108,16 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
     return { raw, norm: raw.map(norm) };
   }, [S]);
   const promptRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<HTMLDivElement>(null);
+  const [viewH, setViewH] = useState(560);
+  useLayoutEffect(() => {
+    const el = viewRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setViewH(el.clientHeight || 560));
+    ro.observe(el); setViewH(el.clientHeight || 560);
+    return () => ro.disconnect();
+  }, []);
+  const eye = Math.max(120, Math.round(viewH * EYE_LINE - fs * 0.66));
 
   const toast = useCallback((m: string) => setToastMsg(m), []);
   useEffect(() => { if (!toastMsg) return; const t = setTimeout(() => setToastMsg(""), 2800); return () => clearTimeout(t); }, [toastMsg]);
@@ -176,6 +186,7 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
     const hist: { t: number; w: number }[] = [];
     // Where whisper last placed you. The scroll may sit a few words further on (see below).
     let lastHit: number | null = null, rate = 0;
+    let backTo = -1, backSeen = 0; // a step back to an earlier sentence needs two listens in a row
     startMic(micId || undefined).then(x => { if (stopped) x.stop(); else { m = x; void v.log("mic open", x.info); } })
       .catch(err => { void v.log("mic error", String(err?.message ?? err)); toast(`Microphone not available: ${err?.message ?? err}`); setLive(false); });
     const diag = setInterval(() => { if (m) void v.log("mic", { peak: m.peak(), quietFor: +m.quietFor().toFixed(1), pos: curRef.current.w }); }, 2000);
@@ -219,6 +230,13 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
           let target = Math.min(end, hit.pos + ahead);
           if (hit.pos >= from) target = Math.max(target, sentenceOf(here) === s0 ? here : target); // no small steps back
           void v.log("align", { from, to: hit.pos, shown: target, score: +hit.score.toFixed(1), near: words.raw.slice(Math.max(0, hit.pos - 2), hit.pos + 8).join(" ") });
+          // Going back a sentence (you re-read it, or whisper misheard): only when two listens agree,
+          // so one stray match does not scroll the text up and down again.
+          if (sentenceOf(target) < sentenceOf(here)) {
+            backSeen = backTo === sentenceOf(target) ? backSeen + 1 : 1; backTo = sentenceOf(target);
+            if (backSeen < 2) return;
+          }
+          backTo = -1; backSeen = 0;
           if (target !== here) setCur({ w: target, s: sentenceOf(target) });
         } else void v.log("align", { from, to: null, near: words.raw.slice(Math.max(0, from - 2), from + 8).join(" ") });
       } finally { inflight = false; }
@@ -308,8 +326,8 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
   // Keep the current sentence on the eye line
   useLayoutEffect(() => {
     const el = promptRef.current?.querySelector<HTMLElement>(`.pl[data-s="${cur.s}"]`);
-    if (el && promptRef.current) promptRef.current.style.transform = `translateY(${(wb ? WB_EYE_LINE : EYE_LINE) - el.offsetTop}px)`;
-  }, [cur.s, fs, S, editing, wb]);
+    if (el && promptRef.current) promptRef.current.style.transform = `translateY(${(wb ? WB_EYE_LINE : eye) - el.offsetTop}px)`;
+  }, [cur.s, fs, S, editing, wb, eye]);
 
   const startEdit = useCallback((i: number) => { setLive(false); setPausing(null); setEditing(i); }, []);
   const saveEdit = (i: number, v: string) => {
@@ -358,10 +376,10 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
           ? <div className="wb-slide"><div className="slide"><ScreenCard script={script} view={view} step={step} ghost />
               {camStream && step > 0 && <div className={"wb-bubble " + corner} title="Your camera, where it will sit in the whiteboard video">
                 <video autoPlay muted playsInline ref={el => { if (el && el.srcObject !== camStream) el.srcObject = camStream; }} /></div>}</div><span className="wb-step">step {step} / {maxStep}</span></div>
-          : <div className="eyeline" aria-hidden="true" />}
+          : <div className="eyeline" style={{ top: eye - 22, height: fs * 1.32 + 44 }} aria-hidden="true" />}
         <div className={"toast" + (toastMsg ? " show" : "")} role="status"><span className="dot" /><span>{toastMsg}</span></div>
         {editing !== null && <div className="edit-hint">Editing sentence {editing + 1} · <kbd>Enter</kbd> save · <kbd>Esc</kbd> cancel · use **word** for stress and / for a breath</div>}
-        <div className="prompt-viewport">
+        <div className="prompt-viewport" ref={viewRef}>
           {wb && <div className="wb-eye" style={{ top: WB_EYE_LINE - 8, height: fs * 1.32 + 16 }} aria-hidden="true" />}
           <div className="prompt" ref={promptRef} style={{ ["--fs" as string]: fs + "px" }}>
             {S.map(s => {
