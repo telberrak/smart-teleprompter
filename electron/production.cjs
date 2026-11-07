@@ -197,6 +197,83 @@ async function exportProduction(scriptPath, segs, onProgress, opts) {
   return { ...out, seconds: total };
 }
 
+/**
+ * The vertical Short's graph. Each piece of the cut gets its own 9:16 layout (slide on top and
+ * camera below, camera alone, or slide alone), then the pieces are joined, the header laid over,
+ * the captions burnt in and the sound levelled.
+ * ix: { slide: [input index or null per piece], header, ass }
+ */
+function shortGraph(s, ix) {
+  const L = s.layout, k = s.pieces.length, parts = [];
+  if (s.hasCamera) parts.push(`[0:v]split=${k}${s.pieces.map((_, i) => `[cv${i}]`).join("")}`);
+  parts.push(`[0:a]asplit=${k}${s.pieces.map((_, i) => `[ca${i}]`).join("")}`);
+  const join = [];
+  s.pieces.forEach((p, i) => {
+    const d = p.to - p.from, cut = `trim=start=${f3(p.from)}:end=${f3(p.to)},setpts=PTS-STARTPTS`;
+    const kind = !s.hasCamera ? "slide" : p.step && ix.slide[i] != null ? "both" : "camera";
+    const sl = ix.slide[i];
+    if (kind === "camera") {
+      parts.push(`[cv${i}]${cut},fps=30,crop=ih*9/16:ih,scale=1080:1920,setsar=1,format=yuv420p[p${i}]`);
+    } else {
+      parts.push(`color=c=${s.background}:s=1080x1920:r=30:d=${f3(d)},format=yuv420p,setsar=1[bg${i}]`);
+      const sy = kind === "slide" ? Math.round((1920 - L.slide.h) / 2) : L.slide.y;
+      parts.push(`[${sl}:v]fps=30,scale=${L.slide.w}:${L.slide.h},setsar=1,format=yuv420p,trim=duration=${f3(d)},setpts=PTS-STARTPTS[sl${i}]`);
+      if (kind === "slide") {
+        parts.push(`[bg${i}][sl${i}]overlay=${L.slide.x}:${sy}:shortest=1,format=yuv420p[p${i}]`);
+      } else {
+        parts.push(`[bg${i}][sl${i}]overlay=${L.slide.x}:${sy}:shortest=1[bs${i}]`);
+        parts.push(`[cv${i}]${cut},fps=30,crop=ih*1080/${L.camera.h}:ih,scale=1080:${L.camera.h},setsar=1[cm${i}]`);
+        parts.push(`[bs${i}][cm${i}]overlay=0:${L.camera.y}:shortest=1,format=yuv420p[p${i}]`);
+      }
+    }
+    parts.push(`[ca${i}]a${cut.replace("setpts", "asetpts")},aresample=48000,aformat=channel_layouts=stereo[a${i}]`);
+    join.push(`[p${i}][a${i}]`);
+  });
+  parts.push(`${join.join("")}concat=n=${k}:v=1:a=1[cv][ca]`);
+  parts.push(`[ix_header]format=rgba[hd]`.replace("ix_header", `${ix.header}:v`));
+  parts.push(`[cv][hd]overlay=0:0:shortest=1${ix.ass ? `,subtitles=${ix.ass}` : ""},format=yuv420p[v]`);
+  const vchain = s.clean !== false ? "highpass=f=80,afftdn=nf=-25,acompressor=threshold=-20dB:ratio=3:attack=5:release=120:makeup=2," : "";
+  parts.push(`[ca]${vchain}loudnorm=I=${s.loudness || -14}:TP=-1.5:LRA=11,aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo[a]`);
+  return parts.join(";\n");
+}
+
+/** opts: { pieces, layout, hasCamera?, background, loudness, clean, slides: [bytes|null per piece], header: bytes, ass } */
+async function exportShort(scriptPath, segs, onProgress, opts) {
+  const dir = takesDir(scriptPath), base = baseName(scriptPath);
+  const cut = await media.ensureCut(scriptPath, segs, x => onProgress(x * 0.2), null);
+  const work = `${base}-short`;
+  fs.mkdirSync(path.join(dir, work), { recursive: true });
+  const put = (name, bytes) => { fs.writeFileSync(path.join(dir, work, name), typeof bytes === "string" ? bytes : Buffer.from(bytes)); return `${work}/${name}`; };
+  const pieces = opts.pieces.filter(p => p.to - p.from > 0.05);
+  if (!pieces.length) throw new Error("Pick at least one sentence for the Short.");
+  const total = pieces.reduce((a, p) => a + (p.to - p.from), 0);
+  const hasCamera = segs.some(s => s.video);
+  const args = ["-y", "-i", path.basename(cut.file)];
+  let n = 1;
+  const ix = { slide: [] };
+  pieces.forEach((p, i) => {
+    const png = opts.slides[opts.pieces.indexOf(p)];
+    if (png && (p.step || !hasCamera)) {
+      args.push("-loop", "1", "-framerate", "30", "-t", f3(p.to - p.from + 0.2), "-i", put(`slide-${i + 1}.png`, png));
+      ix.slide.push(n++);
+    } else ix.slide.push(null);
+  });
+  args.push("-loop", "1", "-framerate", "30", "-t", f3(total + 0.2), "-i", put("header.png", opts.header)); ix.header = n++;
+  if (opts.ass) ix.ass = put("captions.ass", opts.ass);
+  const graph = shortGraph({ ...opts, pieces, hasCamera }, ix);
+  fs.writeFileSync(path.join(dir, work, "graph.txt"), graph);
+  const name = `${base}-short.mp4`;
+  args.push("-filter_complex_script", `${work}/graph.txt`, "-map", "[v]", "-map", "[a]",
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", "-t", f3(total), name);
+  await media.ffmpeg(args, line => {
+    const m = /time=(\d+):(\d+):([\d.]+)/.exec(line);
+    if (m) onProgress(0.2 + 0.8 * Math.min(1, (+m[1] * 3600 + +m[2] * 60 + +m[3]) / total));
+  }, dir);
+  onProgress(1);
+  return { file: path.join(dir, name), seconds: +total.toFixed(3) };
+}
+
 function register() {
   // The cut the preview plays (made, or reused if it has not changed).
   ipcMain.handle("production:cut", async (e, scriptPath, segs) => {
@@ -213,6 +290,10 @@ function register() {
     const win = BrowserWindow.fromWebContents(e.sender);
     return exportProduction(scriptPath, segs, x => win?.webContents.send("export:progress", x), opts);
   });
+  ipcMain.handle("production:short", async (e, scriptPath, segs, opts) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    return exportShort(scriptPath, segs, x => win?.webContents.send("export:progress", x), opts);
+  });
 }
 
-module.exports = { register, exportProduction, productionGraph };
+module.exports = { register, exportProduction, productionGraph, exportShort, shortGraph };

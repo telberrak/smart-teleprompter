@@ -1,6 +1,7 @@
 import type { Segment, TakeInfo } from "./edit";
 import type { Timeline } from "./storyboard";
 import type { Production } from "./production";
+import type { ShortPiece, SHORT_LAYOUT } from "./short";
 // Access to the Electron main process (see electron/preload.cjs).
 // In a plain browser (npm run web) these fall back to file pickers and in-memory saving.
 
@@ -42,6 +43,7 @@ export interface TakesBridge {
   productionCut(scriptPath: string | null, segs: Segment[]): Promise<{ file: string; seconds: number }>;
   pickMusic(): Promise<string | null>;
   exportProduction(scriptPath: string | null, segs: Segment[], opts: ProductionOptions): Promise<ProductionResult>;
+  exportShort(scriptPath: string | null, segs: Segment[], opts: ShortOptions): Promise<{ file: string; seconds: number }>;
   onExportProgress(cb: (p: number) => void): () => void;
 }
 
@@ -66,6 +68,18 @@ export interface ProductionOptions {
   description: string;
   thumbnail?: { png: Uint8Array; at: number; corner: "tl" | "tr" | "bl" | "br" };
   outputs: { mp4: boolean; srt: boolean; txt: boolean; png: boolean };
+}
+export interface ShortOptions {
+  pieces: ShortPiece[];
+  layout: typeof SHORT_LAYOUT;
+  background: string;
+  loudness: number;
+  clean: boolean;
+  /** Slide picture per piece (null where the camera fills the frame). */
+  slides: (Uint8Array | null)[];
+  /** Transparent 1080x1920 PNG laid over everything (title band). */
+  header: Uint8Array;
+  ass: string;
 }
 export interface ProductionResult { file: string | null; srt: string | null; txt: string | null; png: string | null; seconds: number }
 export interface WhiteboardResult { file: string; seconds: number; timeline: string; remotion: string | null; remotionError: string; srt: string | null }

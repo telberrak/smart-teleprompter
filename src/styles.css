@@ -400,3 +400,7 @@ button.pd-item:hover{border-color:var(--tungsten)}
 @media (max-width:1100px){.pd-work{grid-template-columns:1fr;height:auto}.pd-export{grid-template-columns:1fr}}
 .pd-time{font-size:12px;color:var(--ink-3)}
 .pd-props .small-note,.pd-libbody .small-note{word-break:normal;overflow-wrap:anywhere}
+.pd-short{display:flex;flex-direction:column;gap:2px;max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:4px}
+.pd-short label{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:start;padding:5px 6px;border-radius:6px;font-size:12px;color:var(--ink-3);cursor:pointer}
+.pd-short label.on{color:var(--ink);background:rgba(244,184,96,.08)}
+.pd-short small{font-family:var(--mono, monospace);font-size:11px;color:var(--ink-3)}

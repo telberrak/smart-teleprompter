@@ -144,3 +144,30 @@ export async function thumbnailPng(slide: HTMLImageElement | null, title: string
   ctx.fillStyle = brand.accent || "#f4b860"; ctx.fillRect(x, top + lines.length * size * 1.05 - size * 0.6, 220, 18);
   return new Promise((res, rej) => c.toBlob(b => (b ? b.arrayBuffer().then(a => res(new Uint8Array(a)), rej) : rej(new Error("Could not draw the thumbnail"))), "image/png"));
 }
+
+/** The Short's header: course name and lesson title over a soft dark band, on a transparent 1080x1920. */
+export async function shortHeaderPng(title: string, brand: Brand): Promise<Uint8Array> {
+  try { await Promise.all([document.fonts.load(`700 60px 'Bricolage Grotesque'`), document.fonts.load(`700 30px 'Atkinson Hyperlegible'`)]); } catch { /* offline */ }
+  const SW = 1080, SH = 1920;
+  const c = document.createElement("canvas"); c.width = SW; c.height = SH;
+  const ctx = c.getContext("2d")!;
+  const g = ctx.createLinearGradient(0, 0, 0, 280);
+  g.addColorStop(0, "rgba(8,10,14,.85)"); g.addColorStop(1, "rgba(8,10,14,0)");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, SW, 280);
+  const accent = brand.accent || "#f4b860";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = accent; ctx.font = `700 30px ${READ}`;
+  ctx.fillText((brand.course || "").toUpperCase(), 60, 100);
+  // Title in up to two lines, shrinking to fit.
+  let size = 66, lines: string[] = [];
+  for (; size >= 40; size -= 4) {
+    ctx.font = `700 ${size}px ${DISPLAY}`;
+    lines = []; let line = "";
+    for (const wd of title.split(/\s+/)) { const tt = line ? line + " " + wd : wd; if (line && ctx.measureText(tt).width > SW - 120) { lines.push(line); line = wd; } else line = tt; }
+    if (line) lines.push(line);
+    if (lines.length <= 2 && lines.every(l => ctx.measureText(l).width <= SW - 120)) break;
+  }
+  ctx.fillStyle = "#ffffff";
+  lines.slice(0, 2).forEach((l, i) => ctx.fillText(l, 60, 100 + size * 1.1 * (i + 1)));
+  return new Promise((res, rej) => c.toBlob(b => (b ? b.arrayBuffer().then(a => res(new Uint8Array(a)), rej) : rej(new Error("Could not draw the Short header"))), "image/png"));
+}

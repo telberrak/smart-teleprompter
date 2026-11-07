@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("teleprompter", {
     productionCut: (scriptPath, segs) => ipcRenderer.invoke("production:cut", scriptPath, segs),
     pickMusic: () => ipcRenderer.invoke("production:pickMusic"),
     exportProduction: (scriptPath, segs, opts) => ipcRenderer.invoke("production:export", scriptPath, segs, opts),
+    exportShort: (scriptPath, segs, opts) => ipcRenderer.invoke("production:short", scriptPath, segs, opts),
     onExportProgress: cb => {
       const h = (_e, p) => cb(p);
       ipcRenderer.on("export:progress", h);

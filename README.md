@@ -176,6 +176,14 @@ lays it out on seven lanes: titles, camera, slides, voice, music, sound effects 
 
 Use only music you own or have a licence for.
 
+### Vertical Short
+
+Tick **Vertical Short** in Polish & export to also get `NAME-short.mp4`: 1080x1920, up to 60 s.
+The app suggests your opening line as the hook, then the stretch of the lesson that packs the most in
+(stressed words, definitions, "think of…" lines); tick or untick sentences to change it.
+Each sentence shows its slide on top and you below, or you full height before the first slide,
+with big captions two or three words at a time and your stressed words in the accent colour.
+
 ## Roadmap
 
 1. ✅ Prompter
@@ -185,7 +193,12 @@ Use only music you own or have a licence for.
 5. ✅ Captions (SRT) from the script, timed to your voice
 6. ✅ Diagrams in the final video: whiteboard MP4, plus a Remotion timeline and project
 7. ✅ Production: timeline editor, titles, music, pro checks, final MP4, chapters and thumbnail
-8. Next: a 60 s vertical Short (9:16) from key sentences
+8. ✅ Vertical Short (9:16, up to 60 s) from the best sentences
+
+## To do
+
+- Loudness: the export levels in one pass, so a short clip can land about 1 dB above the
+  target (−12.9 LUFS for −14 on an 8 s test). Fix: measure first, then level (two-pass loudnorm).
 
 ## Project layout
 

@@ -6,7 +6,8 @@ import { buildEdit, timeline, type Segment, type TakeInfo } from "../lib/edit";
 import { cues, toSrt } from "../lib/captions";
 import { loadCorner, CORNERS, type Corner } from "../lib/bubble";
 import { bubblePngs, stepPng } from "../lib/slideImage";
-import { drawCaption, drawTitle, thumbnailPng, titlePng } from "../lib/titleArt";
+import { drawCaption, drawTitle, shortHeaderPng, thumbnailPng, titlePng } from "../lib/titleArt";
+import { SHORT_LAYOUT, SHORT_MAX, captionYAt, shortAss, shortCues, shortPieces, shortSeconds, stressedWords, suggestShort } from "../lib/short";
 import {
   TRACKS, DEFAULT_BRAND, add, at, buildProduction, chapters, clipsOn, cutKey, description, move, proChecks, remove, snap, snapPoints, split, update,
   type Brand, type Clip, type Production as Prod, type TitleKind, type TrackId,
@@ -69,7 +70,8 @@ export function Production({ script, view, scriptPath }: Props) {
   });
   const [magnet, setMagnet] = useState(true);
   const [result, setResult] = useState<ProductionResult | null>(null);
-  const [outs, setOuts] = useState(() => store.get("tp.outs", { mp4: true, srt: true, txt: true, png: true }));
+  const [outs, setOuts] = useState(() => store.get("tp.outs", { mp4: true, srt: true, txt: true, png: true, short: false }));
+  const [shortFile, setShortFile] = useState<string | null>(null);
   const [thumb, setThumb] = useState<{ step: number; at: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const zoom = zoomSet || Math.max(0.5, (laneW - 20) / Math.max(1, prod?.seconds ?? 60));
@@ -225,11 +227,40 @@ export function Production({ script, view, scriptPath }: Props) {
   const checks = useMemo(() => (prod ? proChecks(prod, script, segs, frameFor) : []), [prod, script, segs, frameFor]);
   const chs = useMemo(() => chapters(segs, script), [segs, script]);
 
+  // The vertical Short: the picked sentences, 9:16, big captions.
+  const shortPicks = prod ? prod.short ?? suggestShort(segs, script) : [];
+  const pieces = useMemo(() => shortPieces(segs, script, shortPicks, hasCamera), [segs, script, shortPicks.join(","), hasCamera]);
+  const shortLen = shortSeconds(pieces);
+  const togglePick = (n: number) => setProd(q => {
+    const cur = q.short ?? suggestShort(segs, script);
+    return { ...q, short: cur.includes(n) ? cur.filter(x => x !== n) : [...cur, n].sort((a, b) => a - b) };
+  });
+  const doShort = async () => {
+    if (!io || !prod) return;
+    if (shortLen > SHORT_MAX + 0.5) throw new Error(`The Short is ${shortLen.toFixed(0)} s: untick some sentences to get it under ${SHORT_MAX} s.`);
+    const slidePngs = new Map<number, Uint8Array>();
+    const slides: (Uint8Array | null)[] = [];
+    for (const p of pieces) {
+      if (!p.step) { slides.push(null); continue; }
+      if (!slidePngs.has(p.step)) slidePngs.set(p.step, await stepPng(script, view, p.step));
+      slides.push(slidePngs.get(p.step)!);
+    }
+    const voice = clipsOn(prod, "voice")[0];
+    const ass = shortAss(shortCues(pieces, n => S[n - 1]?.spoken ?? ""), { accent: prod.brand.accent, y: captionYAt(pieces, hasCamera), stressed: stressedWords(script, shortPicks) });
+    const r = await io.exportShort(scriptPath, segs, {
+      pieces, layout: SHORT_LAYOUT, background: "0x0c0f14", loudness: voice?.loudness ?? -14, clean: voice?.clean ?? true,
+      slides, header: await shortHeaderPng(prod.title, prod.brand), ass,
+    });
+    setShortFile(r.file);
+  };
+
   const doExport = async () => {
     if (!io || !prod) return;
-    setError(""); setResult(null); setProgress(0);
+    setError(""); setResult(null); setShortFile(null); setProgress(0);
     store.set("tp.outs", outs);
     try {
+      if (outs.short) await doShort();
+      if (!outs.mp4 && !outs.srt && !outs.txt && !outs.png) return;
       const slides: Uint8Array[] = [];
       for (const s of clipsOn(prod, "slides")) slides.push(await stepPng(script, view, s.step));
       const titles: Uint8Array[] = [];
@@ -433,6 +464,20 @@ export function Production({ script, view, scriptPath }: Props) {
           {([["mp4", "MP4", "The finished video"], ["srt", "SRT", "Captions file for YouTube’s subtitle track"], ["txt", "TXT", "Description with chapter timestamps"], ["png", "PNG", "Thumbnail, 1280×720"]] as const).map(([k, ext, name]) => (
             <label key={k} className="pd-out"><input type="checkbox" checked={outs[k]} onChange={e => setOuts({ ...outs, [k]: e.target.checked })} /><span className="ext">{ext}</span>{name}</label>
           ))}
+          <label className="pd-out"><input type="checkbox" checked={!!outs.short} onChange={e => setOuts({ ...outs, short: e.target.checked })} /><span className="ext">MP4</span>Vertical Short, 9:16, up to {SHORT_MAX} s</label>
+          {outs.short && <>
+            <span className="label">Short: {shortLen.toFixed(0)} s of {SHORT_MAX} s{shortLen > SHORT_MAX ? " · too long" : ""}</span>
+            <div className="pd-short">
+              {segs.map(sg => (
+                <label key={sg.sentence} className={shortPicks.includes(sg.sentence) ? "on" : ""}>
+                  <input type="checkbox" checked={shortPicks.includes(sg.sentence)} onChange={() => togglePick(sg.sentence)} />
+                  <span>{S[sg.sentence - 1]?.spoken ?? sg.text}</span><small>{(sg.end - sg.start).toFixed(1)} s</small>
+                </label>
+              ))}
+            </div>
+            <span className="small-note">Suggested: your opening line as the hook, then the passage that packs the most in. Slide on top, you below, big captions in your accent colour.
+              {prod.short && <> <button className="linkbtn" onClick={() => setProd(q => ({ ...q, short: undefined }))}>Back to the suggestion</button></>}</span>
+          </>}
           <span className="label">Thumbnail</span>
           <div className="pd-thumbs">
             {clipsOn(prod, "slides").slice(0, 4).map(s => (
@@ -445,9 +490,10 @@ export function Production({ script, view, scriptPath }: Props) {
           <span className="label">YouTube description</span>
           <pre className="pd-desc">{description(prod, segs, script)}</pre>
           <button className="btn primary pd-go" onClick={() => void doExport()} disabled={progress !== null}>
-            {progress !== null ? `Exporting… ${Math.round(progress * 100)}%` : `Export ${Object.values(outs).filter(Boolean).length} files`}
+            {progress !== null ? `Exporting… ${Math.round(progress * 100)}%` : `Export ${Object.values(outs).filter(Boolean).length} file${Object.values(outs).filter(Boolean).length === 1 ? "" : "s"}`}
           </button>
           {progress !== null && <div className="vsetup"><div className="bar"><b style={{ width: `${Math.round(progress * 100)}%` }} /></div></div>}
+          {shortFile && <div className="out"><span className="ext">9:16</span><span className="f" title={shortFile}>{shortFile.split(/[\\/]/).pop()}</span><button className="linkbtn" onClick={() => void io?.reveal(shortFile)}>Show file</button></div>}
           {result && ([["MP4", result.file], ["SRT", result.srt], ["TXT", result.txt], ["PNG", result.png]] as const).filter(([, f]) => f).map(([ext, f]) => (
             <div key={ext} className="out"><span className="ext">{ext}</span><span className="f" title={f!}>{f!.split(/[\\/]/).pop()}</span><button className="linkbtn" onClick={() => void io?.reveal(f!)}>Show file</button></div>
           ))}

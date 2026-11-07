@@ -58,6 +58,8 @@ export interface Production {
   seconds: number;
   brand: Brand;
   clips: Clip[];
+  /** Sentences picked for the vertical Short (suggested until you change them). */
+  short?: number[];
 }
 
 export const cutKey = (segs: Segment[]) => segs.map(s => `${s.sentence}:${s.take}:${s.start}-${s.end}`).join("|");
