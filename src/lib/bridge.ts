@@ -111,6 +111,8 @@ interface Bridge {
   reopenScript(path: string | null, slides?: string | null): Promise<OpenedScript | null>;
   openSlides(): Promise<OpenedFile | null>;
   saveScript(path: string, content: string): Promise<boolean>;
+  watchScript?(files: string[]): Promise<boolean>;
+  onScriptChanged?(cb: (file: string) => void): () => void;
 }
 
 declare global { interface Window { teleprompter?: Bridge } }
@@ -150,6 +152,10 @@ export async function saveScript(path: string | null, content: string): Promise<
   if (path && window.teleprompter) return window.teleprompter.saveScript(path, content);
   return false; // browser mode: kept in memory only
 }
+
+/** Tell the app which files to watch; `cb` runs when one changes on disk (not by this app). */
+export function watchScript(files: string[]) { void window.teleprompter?.watchScript?.(files); }
+export function onScriptChanged(cb: (file: string) => void): () => void { return window.teleprompter?.onScriptChanged?.(cb) ?? (() => {}); }
 
 /** whisper.cpp in the desktop app; null in the browser preview. */
 export const voice: VoiceBridge | null = typeof window !== "undefined" ? window.teleprompter?.voice ?? null : null;

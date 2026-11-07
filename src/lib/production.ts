@@ -60,6 +60,8 @@ export interface Production {
   version: 1;
   /** The cut this was built from: when it changes the production is rebuilt. */
   cutKey: string;
+  /** The script's slides and words when this was built: when the script changes on disk the timeline is refitted. */
+  scriptKey?: string;
   title: string;
   seconds: number;
   brand: Brand;
@@ -144,6 +146,14 @@ export function setGapDur(p: Production, i: number, dur: number): Production {
   return dur > 0.05 ? insertGap(q, span.start, dur) : q;
 }
 
+/** What of the script the timeline depends on: title, slide steps and words. */
+export function scriptKey(script: Script): string {
+  let h = 0;
+  const text = script.title + "\n" + script.sentences.map(s => `${s.step ?? ""}|${s.screen ?? ""}|${s.spoken}`).join("\n");
+  for (let i = 0; i < text.length; i++) h = (Math.imul(h, 31) + text.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36) + ":" + script.sentences.length;
+}
+
 export const cutKey = (segs: Segment[]) => segs.map(s => `${s.sentence}:${s.take}:${s.start}-${s.end}`).join("|");
 export const cutSeconds = (segs: Segment[]) => +segs.reduce((a, s) => a + (s.end - s.start), 0).toFixed(3);
 
@@ -213,7 +223,7 @@ export function buildProduction(segs: Segment[], script: Script, opts: { hasCame
     for (const s of sc.filter(x => x.kind === "slide").slice(1)) clips.push({ id: uid("x"), track: "sfx", sound: "whoosh", volume: -18, start: r3(Math.max(0, s.start - 0.3)), end: r3(s.start + 0.5) });
   clips.push({ id: uid("cc"), track: "captions", style: "clean", start: 0, end: total });
 
-  return { version: 1, cutKey: cutKey(segs), title: script.title, seconds: total, brand, clips };
+  return { version: 1, cutKey: cutKey(segs), scriptKey: scriptKey(script), title: script.title, seconds: total, brand, clips };
 }
 
 /**

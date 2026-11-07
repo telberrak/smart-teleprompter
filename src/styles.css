@@ -447,3 +447,4 @@ button.pd-item:hover{border-color:var(--tungsten)}
 .jobchip.err{color:#ff8a8a;border-color:rgba(255,120,120,.5);background:rgba(255,120,120,.1)}
 .pd-gap{position:absolute;top:3px;bottom:3px;z-index:2;border:1px dashed rgba(244,184,96,.7);border-radius:5px;background:repeating-linear-gradient(135deg,rgba(244,184,96,.18) 0 6px,rgba(12,15,20,.9) 6px 12px);color:var(--tungsten);font-size:11px;overflow:hidden;white-space:nowrap;cursor:pointer;padding:0 4px}
 .pd-gap.sel{border-style:solid;box-shadow:0 0 0 1px var(--tungsten)}
+.files .fpath{font-size:11px;color:var(--ink-3);word-break:break-all;margin:-2px 0 4px 18px}

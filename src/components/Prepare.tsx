@@ -9,6 +9,10 @@ interface Props {
   script: Script;
   view: SlideView;
   onOpenSlides: () => void;
+  /** Read the script and slides again from disk (null in the browser preview). */
+  onReload?: (() => void) | null;
+  filePath?: string | null;
+  slidesPath?: string | null;
   fileName: string;
   saved: boolean;
   onOpen: () => void;
@@ -16,7 +20,7 @@ interface Props {
   onRecord: () => void;
 }
 
-export function Prepare({ script, view, fileName, saved, onOpen, onOpenSlides, onEdit, onRecord }: Props) {
+export function Prepare({ script, view, fileName, filePath, slidesPath, saved, onOpen, onOpenSlides, onReload, onEdit, onRecord }: Props) {
   const [editing, setEditing] = useState<number | null>(null);
   const [focusStep, setFocusStep] = useState<number | null>(null);
   const S = script.sentences;
@@ -38,12 +42,14 @@ export function Prepare({ script, view, fileName, saved, onOpen, onOpenSlides, o
         <div className="ph"><h2>Script file</h2></div>
         <div className="files">
           <span className="label">Loaded</span>
-          <div><i>✓</i>{fileName}</div>
-          <div>{view.slides ? <><i>✓</i>{view.slides.fileName} · {view.slides.frames.length} slides</> : <span style={{ color: "var(--ink-3)" }}>No slides loaded</span>}</div>
-          <div style={{ color: saved ? "var(--good)" : "var(--ink-3)" }}>{saved ? "Edits save to this file" : "Sample / browser mode: edits stay in memory"}</div>
+          <div title={filePath ?? undefined}><i>✓</i>{fileName}</div>
+          {filePath && <div className="fpath" title={filePath}>{filePath.replace(/[\\/][^\\/]+$/, "")}</div>}
+          <div title={slidesPath ?? undefined}>{view.slides ? <><i>✓</i>{view.slides.fileName} · {view.slides.frames.length} slides</> : <span style={{ color: "var(--ink-3)" }}>No slides loaded</span>}</div>
+          <div style={{ color: saved ? "var(--good)" : "var(--ink-3)" }}>{saved ? "Edits save to this file. Changes made in another editor load by themselves." : "Sample / browser mode: edits stay in memory"}</div>
         </div>
         <div className="go" style={{ marginTop: 0, borderTop: 0 }}>
           <button className="btn" onClick={onOpen}>Open a script…</button>
+          {onReload && <button className="btn ghost" onClick={onReload} title="Read the script and slides again from disk (what is on disk wins)">Reload from disk</button>}
           <button className="btn ghost" onClick={onOpenSlides}>Open slides…</button>
         </div>
       </aside>

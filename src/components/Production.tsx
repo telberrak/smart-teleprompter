@@ -14,7 +14,7 @@ import type { Frame } from "../lib/excalidraw";
 import { drawCaption, drawTitle, shortHeaderPng, thumbnailPng, titlePng } from "../lib/titleArt";
 import { SHORT_LAYOUT, SHORT_MAX, captionYAt, shortAss, shortCues, shortPieces, shortSeconds, stressedWords, suggestShort } from "../lib/short";
 import {
-  TRACKS, DEFAULT_BRAND, add, applyTracks, cutAt, gapSpans, insertGap, removeGap, setGapDur, tlOf, at, canTurnOff, deletable, duplicate, isLocked, isOff, setTrack, toggleMarker, trim, trimmable, buildProduction, chapters, clipsOn, cutKey, description, move, proChecks, remove, snap, snapPoints, split, update,
+  TRACKS, DEFAULT_BRAND, add, applyTracks, scriptKey, cutAt, gapSpans, insertGap, removeGap, setGapDur, tlOf, at, canTurnOff, deletable, duplicate, isLocked, isOff, setTrack, toggleMarker, trim, trimmable, buildProduction, chapters, clipsOn, cutKey, description, move, proChecks, remove, snap, snapPoints, split, update,
   type Brand, type Clip, type Production as Prod, type TitleKind, type TrackId,
 } from "../lib/production";
 
@@ -139,14 +139,16 @@ export function Production({ script, view, scriptPath }: Props) {
   }, [loaded, key, scriptPath]);
   const busy = useRef(false);
   useEffect(() => io?.onExportProgress(x => { if (busy.current) setProgress(x); }), []);
-  const needsRebuild = !!prod && (prod.cutKey !== key || cutState === "stale" || cutState === "missing");
+  const sKey = useMemo(() => scriptKey(script), [script]);
+  const scriptChanged = !!prod?.scriptKey && prod.scriptKey !== sKey;
+  const needsRebuild = !!prod && (prod.cutKey !== key || scriptChanged || cutState === "stale" || cutState === "missing");
   const doRebuild = async () => {
     if (!io || !prod || busy.current || exportJob.get()?.running) return;
     busy.current = true; setBuilding(true); setProgress(0); setError("");
     try {
       const c = await io.productionCut(scriptPath, segs);
       setCut(c); setCutState("fresh");
-      if (prod.cutKey !== key) setProd(q => refit(q, buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand: q.brand })));
+      if (prod.cutKey !== key || scriptChanged) setProd(q => refit(q, buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand: q.brand })));
     } catch (e) { setError(String((e as Error).message ?? e)); }
     finally { busy.current = false; setBuilding(false); setProgress(null); }
   };
@@ -612,7 +614,7 @@ export function Production({ script, view, scriptPath }: Props) {
           {building && <div className="pd-wait pd-building">Building the cut… {progress !== null ? Math.round(progress * 100) + "%" : ""}</div>}
           {!building && needsRebuild && cutState !== "checking" && (
             <div className="pd-wait pd-stale">
-              <b>{cutState === "missing" ? "The preview needs your cut" : "Your cut changed in Review"}</b>
+              <b>{cutState === "missing" ? "The preview needs your cut" : scriptChanged && prod.cutKey === key && cutState === "fresh" ? "Your script changed on disk" : "Your cut changed in Review"}</b>
               <span>{cutState === "missing" ? "Build it from your takes to play the preview." : "Rebuild to see the new reads. Titles, music and your settings are kept."}{cut ? " Until then the preview shows the previous cut." : ""}</span>
               <button className="btn primary" onClick={() => void doRebuild()}>{cutState === "missing" ? "Build the cut" : "Rebuild"}</button>
             </div>)}

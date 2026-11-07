@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld("teleprompter", {
   reopenScript: (file, slides) => ipcRenderer.invoke("script:reopen", file, slides),
   openSlides: () => ipcRenderer.invoke("slides:open"),
   saveScript: (file, content) => ipcRenderer.invoke("script:save", file, content),
+  watchScript: files => ipcRenderer.invoke("script:watch", files),
+  onScriptChanged: cb => { const h = (_e, f) => cb(f); ipcRenderer.on("script:changed", h); return () => ipcRenderer.removeListener("script:changed", h); },
   takes: {
     begin: scriptPath => ipcRenderer.invoke("take:begin", scriptPath),
     chunk: (id, data) => ipcRenderer.invoke("take:chunk", id, data),

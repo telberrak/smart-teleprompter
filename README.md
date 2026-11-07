@@ -26,7 +26,9 @@ Other commands:
 ## Screens
 
 The app reopens the script you worked on last (with the slides you picked for it) on the screen
-you left. If the file moved, it starts with the sample script. The app keeps this in
+you left. If the file moved, it starts with the sample script. If you change the script or slides in another editor while the app is open, they reload by themselves
+(**Reload from disk** in Prepare does it by hand; what is on disk wins). Production then offers a rebuild.
+The app keeps this in
 `%APPDATA%\smart-teleprompter\last-script.json`, so it works in `npm run dev` and the built app alike.
 
 - **Prepare**: open a `1.x-whiteboard-script.md`, check it, and edit any sentence in place. Edits are saved straight to the file.

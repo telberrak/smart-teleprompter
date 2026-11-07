@@ -98,7 +98,28 @@ ipcMain.handle("script:reopen", async (_e, file, slidesFile) => {
 
 ipcMain.handle("script:save", async (_e, file, content) => {
   if (typeof file !== "string" || !/\.(md|txt)$/i.test(file)) throw new Error("Only .md or .txt scripts can be saved");
+  written.set(file, content);
   await fs.writeFile(file, content, "utf8");
+  return true;
+});
+
+// Watch the open script and slides: when another program changes them on disk, the page reloads them.
+// Polling (not fs.watch) so it also notices editors that save by replacing the file.
+const written = new Map(); // what this app last wrote, so its own saves are not reported back
+let watching = [];
+ipcMain.handle("script:watch", (e, files) => {
+  for (const f of watching) fsSync.unwatchFile(f);
+  watching = (Array.isArray(files) ? files : []).filter(f => typeof f === "string" && /\.(md|txt|excalidraw|json)$/i.test(f));
+  for (const f of watching) {
+    fsSync.watchFile(f, { interval: 1000 }, async (cur, prev) => {
+      if (cur.mtimeMs === prev.mtimeMs || !cur.mtimeMs) return;
+      try {
+        const content = await fs.readFile(f, "utf8");
+        if (written.get(f) === content) return;
+        if (!e.sender.isDestroyed()) e.sender.send("script:changed", f);
+      } catch { /* being saved: the next poll sees it */ }
+    });
+  }
   return true;
 });
 

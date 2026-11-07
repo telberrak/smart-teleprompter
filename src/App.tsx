@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import sample from "./sample/1.3-whiteboard-script.md?raw";
 import { parseScript, replaceSentence } from "./lib/script";
-import { inElectron, openScript, openSlides, reopenScript, saveScript, type OpenedScript } from "./lib/bridge";
+import { inElectron, onScriptChanged, openScript, openSlides, reopenScript, saveScript, watchScript, type OpenedScript } from "./lib/bridge";
 import { parseSlides, matchNotesToFrames, type Slides } from "./lib/excalidraw";
 import type { SlideView } from "./components/ScreenCard";
 import { Prepare } from "./components/Prepare";
@@ -31,6 +31,7 @@ export function App() {
   const [startAt, setStartAt] = useState(0);
   const [note, setNote] = useState("");
   const [slides, setSlides] = useState<Slides | null>(null);
+  const [slidesPath, setSlidesPath] = useState<string | null>(null);
   const script = useMemo(() => parseScript(md), [md]);
   // Which frame each ON SCREEN step shows
   const view = useMemo<SlideView>(() => {
@@ -45,6 +46,7 @@ export function App() {
 
   const loadSlides = (f: { path?: string | null; name: string; content: string } | null | undefined, picked = false) => {
     if (picked && f?.path) remember({ slides: f.path });
+    setSlidesPath(f?.path ?? null);
     if (!f) { setSlides(null); return; }
     try { setSlides(parseSlides(f.content, f.name)); setNote(`Slides loaded: ${f.name}`); }
     catch (e) { setSlides(null); setNote(`Could not read ${f.name}: ${(e as Error).message}`); }
@@ -58,6 +60,21 @@ export function App() {
     setMd(f.content); setFile({ path: f.path, name: f.name }); setStartAt(0);
     loadSlides("slides" in f ? f.slides : null);
   };
+  // Read the script and its slides again from disk; what is on disk replaces what the app has.
+  const reload = async (why = "") => {
+    if (!file.path) return;
+    const f = await reopenScript(file.path, slidesPath).catch(() => null);
+    if (!f) { setNote(`Could not read ${file.name} from disk`); return; }
+    setMd(f.content); setFile({ path: f.path, name: f.name });
+    loadSlides(f.slides ?? null);
+    setNote(why || `Reloaded ${f.name} from disk`);
+  };
+  // Watch both files: a change made in another editor loads here by itself.
+  useEffect(() => { if (inElectron && file.path) watchScript([file.path, ...(slidesPath ? [slidesPath] : [])]); }, [file.path, slidesPath]);
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
+  useEffect(() => onScriptChanged(f => void reloadRef.current(`${f.split(/[\\/]/).pop()} changed on disk: reloaded`)), []);
+
   const open = async () => {
     const f = await openScript();
     if (!f) return;
@@ -122,7 +139,7 @@ export function App() {
           </button>)}
         <span className="offline">Offline</span>
       </header>
-      {screen === "prepare" && <Prepare script={script} view={view} fileName={file.name} saved={!!file.path} onOpen={open} onOpenSlides={pickSlides} onEdit={edit} onRecord={() => { setStartAt(0); setScreen("record"); }} />}
+      {screen === "prepare" && <Prepare script={script} view={view} fileName={file.name} filePath={file.path} slidesPath={slidesPath} saved={!!file.path} onOpen={open} onOpenSlides={pickSlides} onReload={inElectron && file.path ? () => void reload() : null} onEdit={edit} onRecord={() => { setStartAt(0); setScreen("record"); }} />}
       {screen === "record" && <Record script={script} view={view} startAt={startAt} onEdit={edit} scriptPath={file.path} />}
       {screen === "production" && <Production script={script} view={view} scriptPath={file.path} />}
       {screen === "review" && <Review script={script} view={view} scriptPath={file.path} onRedo={i => { setStartAt(i); setScreen("record"); }} />}
