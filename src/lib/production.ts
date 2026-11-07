@@ -66,6 +66,10 @@ export interface Production {
   clips: Clip[];
   /** Sentences picked for the vertical Short (suggested until you change them). */
   short?: number[];
+  /** Per lane: locked (no edits) and off (hidden or muted: left out of the preview and the export). */
+  tracks?: Partial<Record<TrackId, { locked?: boolean; off?: boolean }>>;
+  /** Your own markers on the ruler, in seconds. */
+  markers?: number[];
 }
 
 export const cutKey = (segs: Segment[]) => segs.map(s => `${s.sentence}:${s.take}:${s.start}-${s.end}`).join("|");
@@ -205,6 +209,45 @@ export function move(p: Production, id: string, start: number): Production {
   const s = r3(Math.max(0, Math.min(p.seconds - d, start)));
   return update(p, id, { start: s, end: r3(s + d) });
 }
+
+/** Lanes that can be hidden or muted (the voice is the lesson, so it always plays). */
+export const canTurnOff = (t: TrackId) => t !== "voice";
+export const isLocked = (p: Production, t: TrackId) => !!p.tracks?.[t]?.locked;
+export const isOff = (p: Production, t: TrackId) => !!p.tracks?.[t]?.off;
+export function setTrack(p: Production, t: TrackId, patch: { locked?: boolean; off?: boolean }): Production {
+  return { ...p, tracks: { ...p.tracks, [t]: { ...p.tracks?.[t], ...patch } } };
+}
+
+/** The production as it plays: hidden or muted lanes left out (camera hidden, captions off). */
+export function applyTracks(p: Production): Production {
+  if (!p.tracks || !Object.values(p.tracks).some(x => x?.off)) return p;
+  const clips = p.clips.flatMap((c): Clip[] => {
+    if (!isOff(p, c.track) || !canTurnOff(c.track)) return [c];
+    if (c.track === "camera") return [{ ...c, layout: "hidden" }];
+    if (c.track === "captions") return [{ ...c, style: "off" }];
+    return [];
+  });
+  return { ...p, clips };
+}
+
+/** A copy of a title, sound effect or music clip placed right after it. */
+export function duplicate(p: Production, id: string): Production {
+  const c = p.clips.find(x => x.id === id);
+  if (!c || (c.track !== "titles" && c.track !== "sfx" && c.track !== "music")) return p;
+  const d = c.end - c.start;
+  const start = r3(Math.min(p.seconds - d, c.end));
+  return add(p, { ...c, start, end: r3(start + d) } as Omit<Clip, "id">);
+}
+
+/** Add a marker at t, or remove the one within 0.2 s of it. */
+export function toggleMarker(p: Production, t: number): Production {
+  const m = p.markers ?? [];
+  const near = m.findIndex(x => Math.abs(x - t) < 0.2);
+  return { ...p, markers: near >= 0 ? m.filter((_, i) => i !== near) : [...m, r3(t)].sort((a, b) => a - b) };
+}
+
+/** Clips that can be deleted (voice and captions follow the cut; the camera covers the whole video). */
+export const deletable = (c: Clip) => c.track !== "voice" && c.track !== "captions" && c.track !== "camera";
 
 /** Clips you can lengthen or shorten by dragging an edge (voice and captions follow the cut). */
 export const trimmable = (c: Clip) => c.track !== "voice" && c.track !== "captions";

@@ -186,6 +186,10 @@ lays it out on seven lanes: titles, camera, slides, voice, music, sound effects 
 - **Timeline**: click or drag the ruler to seek; drag a clip's left or right edge to make it start or end
   earlier or later (slides and camera: the clip next to it follows); drag titles, sound effects and music to move them (all snap to sentence starts),
   `S` splits the selected clip at the playhead, `Delete` removes it, `Space` plays. "Fit" shows the whole video.
+- **Toolbar and keys (like CapCut)**: undo `Ctrl+Z` / redo `Ctrl+Shift+Z`, split `S` or `Ctrl+B`,
+  trim left `Q` / trim right `W` (cut the selected clip at the playhead), duplicate `Ctrl+D`, `Delete`,
+  marker `M`, zoom `−` / `+`, `←` `→` one frame (`Shift`: one second), `↑` `↓` previous / next edge, `Home` / `End`.
+- **Lanes**: 🔒 locks a lane against edits; ◉ hides a lane (🔊 mutes music or sound effects) in the preview and the export.
 - **Inspector**: change the selected clip, e.g. camera full screen or bubble for part of the video,
   a slow zoom on a slide, music volume and ducking, caption style.
 - **Delete video…** sends the exported files to the Recycle Bin and starts the timeline over

@@ -13,7 +13,7 @@ import type { Frame } from "../lib/excalidraw";
 import { drawCaption, drawTitle, shortHeaderPng, thumbnailPng, titlePng } from "../lib/titleArt";
 import { SHORT_LAYOUT, SHORT_MAX, captionYAt, shortAss, shortCues, shortPieces, shortSeconds, stressedWords, suggestShort } from "../lib/short";
 import {
-  TRACKS, DEFAULT_BRAND, add, at, trim, trimmable, buildProduction, chapters, clipsOn, cutKey, description, move, proChecks, remove, snap, snapPoints, split, update,
+  TRACKS, DEFAULT_BRAND, add, applyTracks, at, canTurnOff, deletable, duplicate, isLocked, isOff, setTrack, toggleMarker, trim, trimmable, buildProduction, chapters, clipsOn, cutKey, description, move, proChecks, remove, snap, snapPoints, split, update,
   type Brand, type Clip, type Production as Prod, type TitleKind, type TrackId,
 } from "../lib/production";
 
@@ -84,9 +84,31 @@ export function Production({ script, view, scriptPath }: Props) {
   const slideUrls = useRef(new Map<number, string>());
   const [, bump] = useState(0);
 
-  const setProd = useCallback((p: Prod | ((q: Prod) => Prod)) => {
+  // Undo / redo: every change keeps the timeline as it was (a drag counts once).
+  const prodRef = useRef<Prod | null>(null);
+  prodRef.current = prod;
+  const hist = useRef<{ past: Prod[]; future: Prod[] }>({ past: [], future: [] });
+  const snapshot = useCallback(() => {
+    const cur = prodRef.current;
+    if (!cur) return;
+    const h = hist.current;
+    if (h.past.at(-1) !== cur) { h.past.push(cur); if (h.past.length > 200) h.past.shift(); }
+    h.future = [];
+  }, []);
+  const setProd = useCallback((p: Prod | ((q: Prod) => Prod), record = true) => {
+    if (record) snapshot();
     setProdRaw(q => { const next = typeof p === "function" ? (q ? p(q) : q) : p; if (next) store.set("tp.prod:" + scriptPath, next); return next; });
-  }, [scriptPath]);
+  }, [scriptPath, snapshot]);
+  const travel = (from: "past" | "future") => {
+    const h = hist.current, cur = prodRef.current;
+    const to = h[from].pop();
+    if (!to || !cur) return;
+    h[from === "past" ? "future" : "past"].push(cur);
+    store.set("tp.prod:" + scriptPath, to);
+    setProdRaw(to);
+  };
+  const undo = () => travel("past");
+  const redo = () => travel("future");
   const setBrand = (b: Brand) => { setBrandRaw(b); store.set("tp.brand", b); setProd(p => ({ ...p, brand: b })); };
 
   // Takes → cut → production (rebuilt when the cut changed in Review).
@@ -101,6 +123,7 @@ export function Production({ script, view, scriptPath }: Props) {
     if (!loaded || !segs.length) return;
     const saved = store.get<Prod | null>("tp.prod:" + scriptPath, null);
     setProdRaw(saved ?? buildProduction(segs, script, { hasCamera, corner: loadCorner(), brand }));
+    hist.current = { past: [], future: [] };
     if (!io) return;
     setCutState("checking");
     io.cutStatus(scriptPath, segs).then(st => {
@@ -161,26 +184,29 @@ export function Production({ script, view, scriptPath }: Props) {
   };
 
   const capList = useMemo(() => cues(segs, n => S[n - 1]?.spoken ?? ""), [segs, S]);
-  const now = prod ? at(prod, t) : null;
+  // What plays: hidden or muted lanes left out.
+  const live = useMemo(() => (prod ? applyTracks(prod) : null), [prod]);
+  const now = live ? at(live, t) : null;
 
   // Titles and captions over the picture, drawn the way they will be exported.
   useEffect(() => {
     const c = overlayRef.current;
-    if (!c || !prod) return;
+    if (!c || !live) return;
     const ctx = c.getContext("2d")!;
     ctx.clearRect(0, 0, c.width, c.height);
-    for (const ti of at(prod, t).titles) drawTitle(ctx, ti, prod.brand, Math.min(1, (t - ti.start) / 0.35, (ti.end - t) / 0.35));
-    const cap = clipsOn(prod, "captions")[0];
+    for (const ti of at(live, t).titles) drawTitle(ctx, ti, live.brand, Math.min(1, (t - ti.start) / 0.35, (ti.end - t) / 0.35));
+    const cap = clipsOn(live, "captions")[0];
     const cue = capList.find(q => t >= q.start && t < q.end);
     if (cap && cap.style !== "off" && cue) drawCaption(ctx, cue, cap.style);
-  }, [t, prod, capList]);
+  }, [t, live, capList]);
 
   // Music volume in the preview (ducking is only heard in the export).
-  const music = prod ? clipsOn(prod, "music")[0] : undefined;
+  const music = live ? clipsOn(live, "music")[0] : undefined;
   useEffect(() => { if (musicRef.current && music) musicRef.current.volume = Math.min(1, Math.pow(10, music.volume / 20)); }, [music]);
 
   const selected = prod?.clips.find(c => c.id === sel) ?? null;
-  const patch = (p: Partial<Clip>) => sel && setProd(q => update(q, sel, p));
+  const selLocked = !!(prod && selected && isLocked(prod, selected.track));
+  const patch = (p: Partial<Clip>) => sel && !selLocked && setProd(q => update(q, sel, p));
   const addTitle = (kind: TitleKind) => {
     if (!prod) return;
     const d = kind === "outro" ? 5 : kind === "chapter" ? 3 : 5;
@@ -227,6 +253,7 @@ export function Production({ script, view, scriptPath }: Props) {
   const drag = useRef<{ id: string; x0: number; s0: number; moved: boolean; mode: "move" | "start" | "end" } | null>(null);
   const onClipDown = (e: RPointerEvent, c: Clip) => {
     setSel(c.id);
+    if (prod && isLocked(prod, c.track)) return;
     if (c.track !== "titles" && c.track !== "sfx" && c.track !== "music") return;
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     drag.current = { id: c.id, x0: e.clientX, s0: c.start, moved: false, mode: "move" };
@@ -241,11 +268,11 @@ export function Production({ script, view, scriptPath }: Props) {
     const d = drag.current;
     if (!d) return;
     const dx = (e.clientX - d.x0) / zoom;
-    if (Math.abs(e.clientX - d.x0) > 3) d.moved = true;
+    if (!d.moved && Math.abs(e.clientX - d.x0) > 3) { d.moved = true; snapshot(); }
     if (!d.moved) return;
     const to = magnet ? snap(d.s0 + dx, points) : d.s0 + dx;
-    if (d.mode === "move") setProd(q => move(q, d.id, to));
-    else { const mode = d.mode; setProd(q => trim(q, d.id, mode, to)); }
+    if (d.mode === "move") setProd(q => move(q, d.id, to), false);
+    else { const mode = d.mode; setProd(q => trim(q, d.id, mode, to), false); }
   };
   const onClipUp = () => { drag.current = null; };
   // Playhead: click or drag on the ruler (it follows the pointer, like CapCut).
@@ -262,14 +289,52 @@ export function Production({ script, view, scriptPath }: Props) {
     setSel(null);
   };
 
-  // Keyboard: Space play, S split, Delete remove (when not typing).
+  // Editing actions (toolbar and keyboard), CapCut style.
+  const canEdit = !!selected && !selLocked;
+  const doSplit = () => { if (canEdit && selected && t > selected.start + 0.2 && t < selected.end - 0.2) setProd(q => split(q, selected.id, t)); };
+  const trimLeft = () => { if (canEdit && selected && trimmable(selected)) setProd(q => trim(q, selected.id, "start", t)); };
+  const trimRight = () => { if (canEdit && selected && trimmable(selected)) setProd(q => trim(q, selected.id, "end", t)); };
+  const doDelete = () => { if (canEdit && selected && deletable(selected)) { setProd(q => remove(q, selected.id)); setSel(null); } };
+  const doDuplicate = () => {
+    if (!canEdit || !selected || !prod) return;
+    const next = duplicate(prod, selected.id);
+    if (next !== prod) { setProd(next); setSel(next.clips.at(-1)!.id); }
+  };
+  const marker = () => setProd(q => toggleMarker(q, t));
+  const zoomBy = (k: number) => { const z = Math.max(1, Math.min(60, +(zoom * k).toFixed(2))); setZoom(z); store.set("tp.zoom", z); };
+  /** Jump to the previous or next sentence edge, clip edge or marker. */
+  const jump = (dir: -1 | 1) => {
+    if (!prod) return;
+    const edges = [...points, ...prod.clips.flatMap(c => [c.start, c.end]), ...(prod.markers ?? [])].sort((a, b) => a - b);
+    const to = dir > 0 ? edges.find(x => x > t + 0.01) : [...edges].reverse().find(x => x < t - 0.01);
+    if (to !== undefined) seek(to);
+  };
+
+  // Keyboard: Space play, S / Ctrl+B split, Q / W trim to the playhead, Delete, Ctrl+D duplicate, M marker,
+  // Ctrl+Z / Ctrl+Shift+Z undo / redo, arrows step a frame (Shift: a second), Up / Down jump between edges, + / - zoom.
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (e.code === "Space") { e.preventDefault(); togglePlay(); }
-      else if (e.key === "s" && sel) setProd(q => split(q, sel, t));
-      else if ((e.key === "Delete" || e.key === "Backspace") && selected && (selected.track === "titles" || selected.track === "sfx" || selected.track === "music" || selected.track === "slides")) { setProd(q => remove(q, selected.id)); setSel(null); }
+      const mod = e.ctrlKey || e.metaKey, key = e.key.toLowerCase();
+      if (mod && key === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
+      else if (mod && key === "y") { e.preventDefault(); redo(); }
+      else if (mod && key === "b") { e.preventDefault(); doSplit(); }
+      else if (mod && key === "d") { e.preventDefault(); doDuplicate(); }
+      else if (mod) return;
+      else if (e.code === "Space") { e.preventDefault(); togglePlay(); }
+      else if (key === "s") doSplit();
+      else if (key === "q") trimLeft();
+      else if (key === "w") trimRight();
+      else if (key === "m") marker();
+      else if (e.key === "Delete" || e.key === "Backspace") doDelete();
+      else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); seek(t + (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 1 : 1 / 30)); }
+      else if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); jump(e.key === "ArrowUp" ? -1 : 1); }
+      else if (e.key === "Home") seek(0);
+      else if (e.key === "End") seek(prod?.seconds ?? 0);
+      else if (e.key === "+" || e.key === "=") zoomBy(1.25);
+      else if (e.key === "-") zoomBy(0.8);
+      else if (e.key === "Escape") setSel(null);
     };
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
@@ -364,6 +429,7 @@ export function Production({ script, view, scriptPath }: Props) {
     try {
       if (outs.short) await doShort();
       if (!outs.mp4 && !outs.srt && !outs.txt && !outs.png) return;
+      const prod = live!; // hidden or muted lanes left out
       const slides: ProductionOptions["slides"] = [];
       for (const s of clipsOn(prod, "slides")) {
         const d = plans.get(s.id);
@@ -518,8 +584,9 @@ export function Production({ script, view, scriptPath }: Props) {
             <span className="small-note">Text comes from your script, so names and terms are spelled right.</span>
           </>}
           <div className="pd-actions">
-            <button className="btn ghost" onClick={() => setProd(q => split(q, selected.id, t))} disabled={t <= selected.start || t >= selected.end}>Split at playhead</button>
-            {(selected.track === "titles" || selected.track === "sfx" || selected.track === "music") && <button className="btn ghost" onClick={() => { setProd(q => remove(q, selected.id)); setSel(null); }}>Delete</button>}
+            {selLocked && <span className="small-note">This lane is locked: unlock it (🔒 on the timeline) to edit.</span>}
+            <button className="btn ghost" onClick={doSplit} disabled={!canEdit || t <= selected.start + 0.2 || t >= selected.end - 0.2}>Split at playhead</button>
+            {deletable(selected) && <button className="btn ghost" onClick={doDelete} disabled={!canEdit}>Delete</button>}
           </div>
         </div>
       </>}
@@ -529,10 +596,21 @@ export function Production({ script, view, scriptPath }: Props) {
   const tl = (
     <div className="panel pd-tl">
       <div className="pd-tools">
-        <button className="btn ghost" onClick={() => sel && setProd(q => split(q, sel, t))} disabled={!sel}>Split <kbd>S</kbd></button>
+        <button className="btn ghost ic" onClick={undo} disabled={!hist.current.past.length} title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+        <button className="btn ghost ic" onClick={redo} disabled={!hist.current.future.length} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
+        <span className="pd-sep" />
+        <button className="btn ghost" onClick={doSplit} disabled={!canEdit || !selected || t <= selected.start + 0.2 || t >= selected.end - 0.2} title="Split the selected clip at the playhead (S or Ctrl+B)">Split <kbd>S</kbd></button>
+        <button className="btn ghost" onClick={trimLeft} disabled={!canEdit || !selected || !trimmable(selected) || t <= selected.start || t >= selected.end} title="Cut off the part of the selected clip before the playhead (Q)">Trim left <kbd>Q</kbd></button>
+        <button className="btn ghost" onClick={trimRight} disabled={!canEdit || !selected || !trimmable(selected) || t <= selected.start || t >= selected.end} title="Cut off the part of the selected clip after the playhead (W)">Trim right <kbd>W</kbd></button>
+        <button className="btn ghost" onClick={doDuplicate} disabled={!canEdit || !selected || !["titles", "sfx", "music"].includes(selected.track)} title="Copy the selected title or sound right after it (Ctrl+D)">Duplicate</button>
+        <button className="btn ghost" onClick={doDelete} disabled={!canEdit || !selected || !deletable(selected)} title="Delete the selected clip (Delete)">Delete</button>
+        <span className="pd-sep" />
+        <button className="btn ghost" onClick={marker} title="Add a marker at the playhead, or remove the one there (M)">Marker <kbd>M</kbd></button>
         <button className={"btn ghost" + (magnet ? " on" : "")} aria-pressed={magnet} onClick={() => setMagnet(!magnet)}>Snap to sentences</button>
         <span className="pd-spacer" />
-        <label className="pd-zoom">Zoom<input type="range" min={1} max={60} step={0.5} value={zoom} onChange={e => { setZoom(+e.target.value); store.set("tp.zoom", +e.target.value); }} /></label>
+        <button className="btn ghost ic" onClick={() => zoomBy(0.8)} title="Zoom out (−)" aria-label="Zoom out">−</button>
+        <label className="pd-zoom"><span className="sr">Zoom</span><input type="range" min={1} max={60} step={0.5} value={zoom} onChange={e => { setZoom(+e.target.value); store.set("tp.zoom", +e.target.value); }} /></label>
+        <button className="btn ghost ic" onClick={() => zoomBy(1.25)} title="Zoom in (+)" aria-label="Zoom in">+</button>
         <button className={"btn ghost" + (!zoomSet ? " on" : "")} aria-pressed={!zoomSet} onClick={() => { setZoom(0); store.set("tp.zoom", 0); }}>Fit</button>
         <button className="btn ghost danger" onClick={() => void deleteVideo()} title="Send the exported files to the Recycle Bin and start the timeline over">Delete video…</button>
         <button className="btn primary" onClick={() => setPane("export")}>Polish &amp; export →</button>
@@ -540,7 +618,19 @@ export function Production({ script, view, scriptPath }: Props) {
       <div className="pd-scroll">
         <div className="pd-heads">
           <div className="pd-rulerhead">Chapters</div>
-          {TRACKS.map(tr => <div key={tr.id} className="pd-head"><span className="tag">{tr.tag}</span>{tr.name}</div>)}
+          {TRACKS.map(tr => {
+            const locked = isLocked(prod, tr.id), off = isOff(prod, tr.id), audio = tr.id === "music" || tr.id === "sfx";
+            return (
+              <div key={tr.id} className={"pd-head" + (off ? " off" : "")}>
+                <span className="tag">{tr.tag}</span><span className="nm">{tr.name}</span>
+                <button className={"pd-hb" + (locked ? " on" : "")} aria-pressed={locked} title={locked ? "Unlock this lane" : "Lock this lane (no edits)"}
+                  onClick={() => setProd(q => setTrack(q, tr.id, { locked: !locked }))}>{locked ? "🔒" : "🔓"}</button>
+                {canTurnOff(tr.id) && <button className={"pd-hb" + (off ? " on" : "")} aria-pressed={off}
+                  title={off ? (audio ? "Unmute this lane" : "Show this lane") : audio ? "Mute this lane (preview and export)" : "Hide this lane (preview and export)"}
+                  onClick={() => setProd(q => setTrack(q, tr.id, { off: !off }))}>{audio ? (off ? "🔇" : "🔊") : off ? "◌" : "◉"}</button>}
+              </div>
+            );
+          })}
         </div>
         <div className="pd-lanes" ref={lanesRef}>
           <div className="pd-inner" style={{ width }}>
@@ -551,15 +641,16 @@ export function Production({ script, view, scriptPath }: Props) {
               <span className="pd-head-grip" style={{ left: t * zoom }} aria-hidden="true" />
               {Array.from({ length: Math.floor(total / (zoom < 6 ? 60 : zoom < 20 ? 15 : 5)) + 1 }, (_, i) => i * (zoom < 6 ? 60 : zoom < 20 ? 15 : 5)).map(s => <span key={s} className="tick" style={{ left: s * zoom }}>{fmt(s)}</span>)}
               {chs.map(c => <span key={c.start} className="chap" style={{ left: c.start * zoom }}>◆ {c.name}</span>)}
+              {(prod.markers ?? []).map(m => <span key={m} className="pd-mark" style={{ left: m * zoom }} title={`Marker at ${fmtMs(m)} (M at the playhead removes it)`} />)}
             </div>
             {TRACKS.map(tr => (
-              <div key={tr.id} className="pd-lane" onClick={laneClick}>
+              <div key={tr.id} className={"pd-lane" + (isOff(prod, tr.id) ? " off" : "") + (isLocked(prod, tr.id) ? " locked" : "")} onClick={laneClick}>
                 {clipsOn(prod, tr.id).map(c => (
                   <button key={c.id} className={"pd-clip " + CLIP_COLOURS[tr.id] + (sel === c.id ? " sel" : "") + (c.track === "titles" || c.track === "sfx" || c.track === "music" ? " movable" : "")}
                     style={{ left: c.start * zoom, width: Math.max(4, (c.end - c.start) * zoom) }} title={clipLabel(c)}
                     onPointerDown={e => onClipDown(e, c)} onPointerMove={onClipMove} onPointerUp={onClipUp}>
                     {clipLabel(c)}
-                    {trimmable(c) && (c.end - c.start) * zoom > 14 && <>
+                    {trimmable(c) && !isLocked(prod, c.track) && (c.end - c.start) * zoom > 14 && <>
                       <span className="pd-trim l" title="Drag to change where it starts" onPointerDown={e => onEdgeDown(e, c, "start")} />
                       <span className="pd-trim r" title="Drag to change where it ends" onPointerDown={e => onEdgeDown(e, c, "end")} />
                     </>}
@@ -567,6 +658,7 @@ export function Production({ script, view, scriptPath }: Props) {
                 ))}
               </div>
             ))}
+            {(prod.markers ?? []).map(m => <div key={m} className="pd-mark-line" style={{ left: m * zoom }} aria-hidden="true" />)}
             <div className="pd-head-line" style={{ left: t * zoom }} aria-hidden="true" />
           </div>
         </div>

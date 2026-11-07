@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseScript } from "./script";
-import { at, bestCorner, refit, buildProduction, chapterName, chapters, clipsOn, description, move, proChecks, snap, split, trim, update } from "./production";
+import { at, bestCorner, refit, buildProduction, chapterName, chapters, clipsOn, description, move, proChecks, snap, split, trim, update, applyTracks, duplicate, setTrack, toggleMarker } from "./production";
 import type { Segment } from "./edit";
 import type { Frame } from "./excalidraw";
 
@@ -90,5 +90,29 @@ describe("trimming clips", () => {
   it("leaves voice and captions alone", () => {
     const v = clipsOn(p, "voice")[0];
     expect(trim(p, v.id, "end", 1)).toBe(p);
+  });
+});
+
+describe("lanes, markers, duplicate", () => {
+  const p = buildProduction(segs, script, { hasCamera: true, corner: "br" });
+  it("hidden lanes are left out of what plays; the voice always stays", () => {
+    const q = applyTracks(setTrack(setTrack(setTrack(p, "titles", { off: true }), "camera", { off: true }), "voice", { off: true }));
+    expect(clipsOn(q, "titles")).toHaveLength(0);
+    expect(clipsOn(q, "camera").every(c => c.layout === "hidden")).toBe(true);
+    expect(clipsOn(q, "voice")).toHaveLength(1);
+    const locked = setTrack(p, "titles", { locked: true });
+    expect(applyTracks(locked)).toBe(locked);
+  });
+  it("toggles a marker", () => {
+    const q = toggleMarker(p, 3);
+    expect(q.markers).toEqual([3]);
+    expect(toggleMarker(q, 3.1).markers).toEqual([]);
+  });
+  it("duplicates a title right after itself", () => {
+    const ti = clipsOn(p, "titles")[0];
+    const q = duplicate(p, ti.id);
+    const copy = q.clips.at(-1)!;
+    expect(copy.start).toBeCloseTo(Math.min(p.seconds - (ti.end - ti.start), ti.end));
+    expect(copy.id).not.toBe(ti.id);
   });
 });
