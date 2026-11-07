@@ -37,6 +37,7 @@ Other commands:
 | ← | Back one sentence |
 | E, or click a line | Pause and edit that sentence. Enter saves to the script, Esc cancels |
 | M | Mirror for teleprompter glass |
+| W | Whiteboard mode: slide in the middle, text scrolling underneath (toggle) |
 
 ## Script markup
 

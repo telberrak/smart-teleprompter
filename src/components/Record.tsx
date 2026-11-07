@@ -13,6 +13,10 @@ interface Props {
 }
 
 const EYE_LINE = 140; // px from the top of the prompter: just under the camera
+const WB_EYE_LINE = 64; // whiteboard mode: first line under the slide, one faded line above
+
+type Mode = "prompter" | "whiteboard";
+const loadMode = (): Mode => { try { return localStorage.getItem("tp.mode") === "whiteboard" ? "whiteboard" : "prompter"; } catch { return "prompter"; } };
 
 /**
  * Full-screen prompter. Milestone 1 simulates the voice with a steady reading pace;
@@ -50,7 +54,13 @@ export function Record({ script, view, startAt, onEdit }: Props) {
   const [recT, setRecT] = useState(0);
   const [take, setTake] = useState(1);
   const [mirror, setMirror] = useState(false);
-  const [fs, setFs] = useState(46);
+  const [mode, setModeRaw] = useState<Mode>(loadMode);
+  const wb = mode === "whiteboard";
+  const setMode = useCallback((m: Mode) => { setModeRaw(m); try { localStorage.setItem("tp.mode", m); } catch { /* private window */ } }, []);
+  const [fsP, setFsP] = useState(46);
+  const [fsW, setFsW] = useState(34);
+  const fs = wb ? fsW : fsP;
+  const setFs = wb ? setFsW : setFsP;
   const [toastMsg, setToastMsg] = useState("");
   const [levels, setLevels] = useState<number[]>(Array(16).fill(0));
   const [wpm, setWpm] = useState(0);
@@ -97,8 +107,8 @@ export function Record({ script, view, startAt, onEdit }: Props) {
   // Keep the current sentence on the eye line
   useLayoutEffect(() => {
     const el = promptRef.current?.querySelector<HTMLElement>(`.pl[data-s="${cur.s}"]`);
-    if (el && promptRef.current) promptRef.current.style.transform = `translateY(${EYE_LINE - el.offsetTop}px)`;
-  }, [cur.s, fs, S, editing]);
+    if (el && promptRef.current) promptRef.current.style.transform = `translateY(${(wb ? WB_EYE_LINE : EYE_LINE) - el.offsetTop}px)`;
+  }, [cur.s, fs, S, editing, wb]);
 
   const startEdit = useCallback((i: number) => { setLive(false); setPausing(null); setEditing(i); }, []);
   const saveEdit = (i: number, v: string) => {
@@ -126,10 +136,11 @@ export function Record({ script, view, startAt, onEdit }: Props) {
       else if (e.key === "ArrowLeft") back();
       else if (e.key === "e" || e.key === "E") { e.preventDefault(); startEdit(cur.s); }
       else if (e.key === "m" || e.key === "M") setMirror(m => !m);
+      else if (e.key === "w" || e.key === "W") setMode(wb ? "prompter" : "whiteboard");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editing, back, startEdit, cur.s]);
+  }, [editing, back, startEdit, cur.s, wb, setMode]);
 
   const step = S.slice(0, cur.s + 1).reduce((a, s) => s.step ?? a, 0);
   const maxStep = Math.max(0, ...S.map(s => s.step ?? 0));
@@ -139,13 +150,16 @@ export function Record({ script, view, startAt, onEdit }: Props) {
   const mmss = `${String(Math.floor(recT / 60)).padStart(2, "0")}:${String(recT % 60).padStart(2, "0")}`;
 
   return (
-    <section className="screen on" id="record">
-      <div className={"stage" + (live ? " live" : "") + (mirror ? " mirrored" : "")}>
+    <section className={"screen on" + (wb ? " wb" : "")} id="record">
+      <div className={"stage" + (live ? " live" : "") + (mirror ? " mirrored" : "") + (wb ? " wb" : "")}>
         <div className="notch" aria-hidden="true"><span className="lens" /></div>
-        <div className="eyeline" aria-hidden="true" />
+        {wb
+          ? <div className="wb-slide"><div className="slide"><ScreenCard script={script} view={view} step={step} ghost /></div><span className="wb-step">step {step} / {maxStep}</span></div>
+          : <div className="eyeline" aria-hidden="true" />}
         <div className={"toast" + (toastMsg ? " show" : "")} role="status"><span className="dot" /><span>{toastMsg}</span></div>
         {editing !== null && <div className="edit-hint">Editing sentence {editing + 1} · <kbd>Enter</kbd> save · <kbd>Esc</kbd> cancel · use **word** for stress and / for a breath</div>}
         <div className="prompt-viewport">
+          {wb && <div className="wb-eye" style={{ top: WB_EYE_LINE - 8, height: fs * 1.32 + 16 }} aria-hidden="true" />}
           <div className="prompt" ref={promptRef} style={{ ["--fs" as string]: fs + "px" }}>
             {S.map(s => {
               const rel = s.index < cur.s ? "past" : s.index === cur.s ? "cur" : s.index === cur.s + 1 ? "next" : "later";
@@ -185,16 +199,22 @@ export function Record({ script, view, startAt, onEdit }: Props) {
       </div>
 
       <div className="side">
-        <div className="panel">
+        {!wb && <div className="panel">
           <div className="ph"><h2>On screen now</h2><span className="meta">step {step} / {maxStep}</span></div>
           <div className="mini"><div className="slide"><ScreenCard script={script} view={view} step={step} ghost /></div></div>
-        </div>
+        </div>}
         <div className="panel">
           <div className="ph"><h2>Prompter</h2></div>
           <div className="mini">
+            <div className="row">Mode
+              <span className="seg" role="group" aria-label="Prompter mode">
+                <button className={!wb ? "on" : ""} aria-pressed={!wb} onClick={() => setMode("prompter")}>Prompter</button>
+                <button className={wb ? "on" : ""} aria-pressed={wb} onClick={() => setMode("whiteboard")}>Whiteboard</button>
+              </span>
+            </div>
             <label className="row" htmlFor="mirror">Mirror for glass <input type="checkbox" className="switch" id="mirror" checked={mirror} onChange={e => setMirror(e.target.checked)} /></label>
-            <label className="row" htmlFor="fs">Text size <input type="range" id="fs" min={30} max={64} value={fs} onChange={e => setFs(+e.target.value)} /></label>
-            <div className="row">Shortcuts <span><kbd>Space</kbd> <kbd>←</kbd> <kbd>E</kbd> <kbd>M</kbd></span></div>
+            <label className="row" htmlFor="fs">Text size <input type="range" id="fs" min={wb ? 22 : 30} max={wb ? 48 : 64} value={fs} onChange={e => setFs(+e.target.value)} /></label>
+            <div className="row">Shortcuts <span><kbd>Space</kbd> <kbd>←</kbd> <kbd>E</kbd> <kbd>M</kbd> <kbd>W</kbd></span></div>
           </div>
         </div>
         <div className="panel">
