@@ -68,6 +68,8 @@ export interface Production {
   short?: number[];
   /** Per lane: locked (no edits) and off (hidden or muted: left out of the preview and the export). */
   tracks?: Partial<Record<TrackId, { locked?: boolean; off?: boolean }>>;
+  /** Seconds the drawing waits after the word that names a part (default 0.3). */
+  drawDelay?: number;
   /** Your own markers on the ruler, in seconds. */
   markers?: number[];
 }

@@ -138,7 +138,8 @@ export function plan(frame: Frame, mode: DrawMode, start: number, end: number, w
       const ws = u.words.map(stem).filter(w => w.length > 2);
       const want = new Set(ws.length > 1 ? [ws[ws.length - 1]] : ws);
       const hit = spoken.find(w => want.has(w.s));
-      if (hit) t[i] = Math.max(start, hit.t - 0.25);
+      // Starts drawing as the word is said (never before), so the box appears as you name it.
+      if (hit) t[i] = Math.max(start, hit.t);
     });
     // The slide's title (the topmost text) is up from the start.
     const title = order.find(({ u }) => u.kind === "text");
@@ -179,19 +180,35 @@ export function plan(frame: Frame, mode: DrawMode, start: number, end: number, w
   return us.map((unit, i) => ({ unit, start: Math.min(end - 0.2, Math.max(start, t[i] ?? start)), dur: drawTime(unit) }));
 }
 
-/** Words of the sentences spoken while a slide is up, with when each is said (cut time). */
-export function timedWords(segs: { sentence: number; start: number; end: number }[], spoken: (n: number) => string): TimedWord[] {
+type Piece = { type: "word"; text: string } | { type: "breath" } | { type: "pause"; secs: number };
+
+/**
+ * Words of the sentences spoken while a slide is up, with when each is said (cut time).
+ * Each word takes time by its length; a breath mark "/" or a [pause] inside the sentence is a short
+ * gap, so words after it are placed later (as you actually say them).
+ */
+export function timedWords(segs: { sentence: number; start: number; end: number }[], spoken: (n: number) => string | Piece[]): TimedWord[] {
   const out: TimedWord[] = [];
   let t = 0;
   for (const s of segs) {
     const d = s.end - s.start;
-    const a = t + Math.min(0.1, d * 0.1), b = t + d - Math.min(0.2, d * 0.1);
-    const ws = spoken(s.sentence).split(/\s+/).filter(Boolean);
-    const total = ws.reduce((n, w) => n + w.length + 1, 0) || 1;
+    const a = t + Math.min(0.15, d * 0.1), b = t + d - Math.min(0.25, d * 0.1);
+    const src = spoken(s.sentence);
+    const pieces: Piece[] = typeof src === "string" ? src.split(/\s+/).filter(Boolean).map(text => ({ type: "word", text })) : src;
+    // Drop gaps at the very end (the cut trims trailing silence).
+    while (pieces.length && pieces[pieces.length - 1].type !== "word") pieces.pop();
+    const words = pieces.filter((x): x is Extract<Piece, { type: "word" }> => x.type === "word");
+    const chars = words.reduce((n, w) => n + w.text.length + 1, 0) || 1;
+    // Gaps inside the sentence: a breath ~0.3 s, a pause its length, together at most a third of the sentence.
+    const gapsRaw = pieces.reduce((n, x) => n + (x.type === "breath" ? 0.3 : x.type === "pause" ? Math.min(x.secs, 1.5) : 0), 0);
+    const gapK = gapsRaw > 0 ? Math.min(1, ((b - a) / 3) / gapsRaw) : 0;
+    const talk = Math.max(0.1, b - a - gapsRaw * gapK);
     let x = a;
-    for (const w of ws) {
-      for (const tok of tokens(w)) out.push({ word: tok, t: x });
-      x += ((b - a) * (w.length + 1)) / total;
+    for (const pc of pieces) {
+      if (pc.type === "word") {
+        for (const tok of tokens(pc.text)) out.push({ word: tok, t: x });
+        x += (talk * (pc.text.length + 1)) / chars;
+      } else x += (pc.type === "breath" ? 0.3 : Math.min(pc.secs, 1.5)) * gapK;
     }
     t += d;
   }

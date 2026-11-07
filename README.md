@@ -213,7 +213,8 @@ traced like a pen on a whiteboard. Pick how for each slide in the Inspector (**D
 - **One after another**: everything draws in quickly as the slide appears, in reading order.
 - **Still**: the whole slide at once, as before.
 
-A text next to a box (like a "?") draws with that box. The Short and Review's whiteboard video still use still slides.
+A text next to a box (like a "?") draws with that box. Word times are estimated from the script
+(word lengths, `/` breaths and pauses); if parts still come in too early or late, change **Drawing timing** in the Inspector. The Short and Review's whiteboard video still use still slides.
 
 ### Vertical Short
 

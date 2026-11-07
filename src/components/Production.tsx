@@ -365,7 +365,9 @@ export function Production({ script, view, scriptPath }: Props) {
 
   // Drawing plans: each run of slide clips showing the same Excalidraw frame draws in once,
   // its parts timed to when you name them (see drawOn.ts).
-  const words = useMemo(() => timedWords(segs, n => S[n - 1]?.spoken ?? ""), [segs, S]);
+  const delay = prod?.drawDelay ?? 0.3;
+  const words = useMemo(() => timedWords(segs, n => (S[n - 1]?.tokens ?? []).map(k => (k.type === "word" ? { type: "word" as const, text: k.text } : k.type === "pause" ? { type: "pause" as const, secs: k.secs } : { type: "breath" as const })))
+    .map(w => ({ ...w, t: w.t + delay })), [segs, S, delay]);
   const plans = useMemo(() => {
     const out = new Map<string, { frame: Frame; plan: Planned[] }>();
     if (!prod) return out;
@@ -579,6 +581,8 @@ export function Production({ script, view, scriptPath }: Props) {
           {selected.track === "slides" && <>
             {frameFor(selected.step) && <label className="pd-field">Drawing<select value={selected.draw ?? "said"} onChange={e => patch({ draw: e.target.value as DrawMode })}>
               <option value="said">Draws in as you name each part</option><option value="quick">Draws in quickly, part by part</option><option value="still">Shows whole (no drawing)</option></select></label>}
+            {frameFor(selected.step) && (selected.draw ?? "said") === "said" && <label className="pd-field">Drawing timing (all slides)<select value={String(prod?.drawDelay ?? 0.3)} onChange={e => setProd(q => ({ ...q, drawDelay: +e.target.value }))}>
+              <option value="-0.3">Just before you say it</option><option value="0">As you start the word</option><option value="0.3">Just after (default)</option><option value="0.7">A beat later</option><option value="1.2">Clearly after</option></select></label>}
             <label className="pd-field">Comes in<select value={selected.enter} onChange={e => patch({ enter: e.target.value as "fade" })}><option value="fade">Fade</option><option value="cut">Cut</option></select></label>
             <label className="pd-field">Motion<select value={selected.motion} onChange={e => patch({ motion: e.target.value as "none" })}><option value="none">Still</option><option value="zoom">Slow zoom in</option></select></label>
             <label className="pd-field">Camera bubble here<select value={selected.corner ?? ""} onChange={e => patch({ corner: (e.target.value || undefined) as Corner | undefined })}><option value="">Same as camera</option>{CORNERS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>
