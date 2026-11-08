@@ -148,6 +148,16 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
   const cur = sel !== null ? S[sel] : null;
   const step = S.slice(0, (sel ?? 0) + 1).reduce((a, s) => s.step ?? a, 0);
 
+  // Sentences with no read in the cut: step through them to redo each one.
+  const missing = S.map((_, i) => i).filter(i => !edit[i]?.chosen);
+  const goMissing = (dir: 1 | -1) => {
+    if (!missing.length) return;
+    const from = sel ?? -1;
+    const i = dir > 0 ? missing.find(x => x > from) ?? missing[0] : [...missing].reverse().find(x => x < (sel ?? S.length)) ?? missing[missing.length - 1];
+    setSel(i);
+    requestAnimationFrame(() => document.querySelector(`#review .tr[data-i="${i}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" }));
+  };
+
   return (
     <section className="screen on" id="review">
       <div className="panel">
@@ -160,6 +170,11 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
         <div className="rv-tools">
           <button className="btn ghost" onClick={() => lockAll(true)} disabled={!recorded}>🔒 Lock all</button>
           <button className="btn ghost" onClick={() => lockAll(false)} disabled={!recorded}>🔓 Unlock all</button>
+          {missing.length > 0 && <>
+            <button className="btn ghost" onClick={() => goMissing(-1)} title="Previous sentence that is not recorded yet">← Prev</button>
+            <button className="btn ghost" onClick={() => goMissing(1)} title="Next sentence that is not recorded yet: then click its Redo">Next not recorded →</button>
+            <span className="small-note">{missing.length} not recorded{sel !== null && missing.includes(sel) ? ` · ${missing.indexOf(sel) + 1} of ${missing.length}` : ""}</span>
+          </>}
           <span className="pd-spacer" />
           {review.hidden.length > 0 && <button className="btn ghost" onClick={restoreRemoved} title="Bring back every read you removed with ×">Restore {review.hidden.length} removed read{review.hidden.length === 1 ? "" : "s"}</button>}
           <button className="btn ghost danger" onClick={() => void resetAll()}>Reset all…</button>
@@ -169,7 +184,7 @@ export function Review({ script, view, scriptPath, onRedo }: Props) {
           {S.map((s, i) => {
             const e = edit[i];
             return (
-              <div className={"tr" + (e?.chosen ? "" : " missing") + (sel === i ? " sel" : "")} key={i}>
+              <div className={"tr" + (e?.chosen ? "" : " missing") + (sel === i ? " sel" : "")} key={i} data-i={i}>
                 <span className="no">{String(i + 1).padStart(2, "0")}</span>
                 <span className="txt">{s.spoken}</span>
                 <div className="takes">
