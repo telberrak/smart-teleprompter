@@ -221,7 +221,8 @@ export function buildProduction(segs: Segment[], script: Script, opts: { hasCame
   // A soft whoosh as each slide comes in (not the first one).
   if (opts.whoosh !== false)
     for (const s of sc.filter(x => x.kind === "slide").slice(1)) clips.push({ id: uid("x"), track: "sfx", sound: "whoosh", volume: -18, start: r3(Math.max(0, s.start - 0.3)), end: r3(s.start + 0.5) });
-  clips.push({ id: uid("cc"), track: "captions", style: "clean", start: 0, end: total });
+  // Captions are off by default (YouTube gets the .srt instead); turn them on from the Captions lane.
+  clips.push({ id: uid("cc"), track: "captions", style: "off", start: 0, end: total });
 
   return { version: 1, cutKey: cutKey(segs), scriptKey: scriptKey(script), title: script.title, seconds: total, brand, clips };
 }
@@ -442,7 +443,7 @@ export function proChecks(p: Production, script: Script, segs: Segment[], frameF
     const fast = list.filter(c => c.text.length / Math.max(0.1, c.end - c.start) > 20);
     out.push({ id: "capspeed", name: "Captions are slow enough to read", ok: fast.length <= Math.ceil(list.length * 0.05),
       detail: fast.length ? `${fast.length} of ${list.length} captions are over 20 characters a second` : `${list.length} captions, one line each, 42 characters max` });
-  } else out.push({ id: "capspeed", name: "Captions are on", ok: false, detail: "Most people watch with the sound off at least part of the time",
+  } else out.push({ id: "capspeed", name: "Captions are off in the video", ok: true, detail: "Tick SRT to give YouTube a subtitle track, or burn them in",
     fix: cap ? { label: "Turn captions on", apply: q => update(q, cap.id, { style: "clean" }) } : undefined });
 
   // Intro short
