@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Script } from "../lib/script";
 import { ScreenCard, type SlideView } from "./ScreenCard";
+import { DetachedWindow } from "./DetachedWindow";
 import { CORNERS, isCorner, loadCorner, saveCorner, type Corner } from "../lib/bubble";
 import { BREATH } from "../lib/script";
 import { Words } from "./Words";
@@ -64,6 +65,9 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
   const [recT, setRecT] = useState(0);
   const [take, setTake] = useState(1);
   const [mirror, setMirror] = useState(false);
+  // "On screen now" inside the Record screen, or in its own window (drag it to a second monitor).
+  const [detached, setDetachedState] = useState(() => { try { return localStorage.getItem("tp.onscreen") === "window"; } catch { return false; } });
+  const setDetached = (v: boolean) => { setDetachedState(v); try { localStorage.setItem("tp.onscreen", v ? "window" : "embedded"); } catch { /* private window */ } };
   const [mode, setModeRaw] = useState<Mode>(loadMode);
   const wb = mode === "whiteboard";
   const setMode = useCallback((m: Mode) => { setModeRaw(m); try { localStorage.setItem("tp.mode", m); } catch { /* private window */ } }, []);
@@ -420,9 +424,19 @@ export function Record({ script, view, startAt, onEdit, scriptPath }: Props) {
       </div>
 
       <div className="side">
+        {detached && <DetachedWindow title={`On screen now · ${script.title}`} onClosed={() => setDetached(false)}>
+          <div className="dt-head"><b>On screen now</b><span>step {step} / {maxStep}</span></div>
+          <div className="dt-slide"><div className="slide"><ScreenCard script={script} view={view} step={step} ghost /></div></div>
+        </DetachedWindow>}
         {!wb && <div className="panel">
-          <div className="ph"><h2>On screen now</h2><span className="meta">step {step} / {maxStep}</span></div>
-          <div className="mini"><div className="slide"><ScreenCard script={script} view={view} step={step} ghost /></div></div>
+          <div className="ph"><h2>On screen now</h2><span className="meta">step {step} / {maxStep}</span>
+            <span className="seg" role="group" aria-label="Where On screen now is shown">
+              <button className={!detached ? "on" : ""} aria-pressed={!detached} onClick={() => setDetached(false)}>Embedded</button>
+              <button className={detached ? "on" : ""} aria-pressed={detached} onClick={() => setDetached(true)} title="Show the slide in its own window: drag it to your second monitor">Own window</button>
+            </span></div>
+          {detached
+            ? <p className="small-note dt-note">Showing in its own window. Drag it to your second monitor; it opens there next time.</p>
+            : <div className="mini"><div className="slide"><ScreenCard script={script} view={view} step={step} ghost /></div></div>}
         </div>}
         <div className="panel">
           <div className="ph"><h2>Prompter</h2></div>

@@ -448,3 +448,13 @@ button.pd-item:hover{border-color:var(--tungsten)}
 .pd-gap{position:absolute;top:3px;bottom:3px;z-index:2;border:1px dashed rgba(244,184,96,.7);border-radius:5px;background:repeating-linear-gradient(135deg,rgba(244,184,96,.18) 0 6px,rgba(12,15,20,.9) 6px 12px);color:var(--tungsten);font-size:11px;overflow:hidden;white-space:nowrap;cursor:pointer;padding:0 4px}
 .pd-gap.sel{border-style:solid;box-shadow:0 0 0 1px var(--tungsten)}
 .files .fpath{font-size:11px;color:var(--ink-3);word-break:break-all;margin:-2px 0 4px 18px}
+
+/* "On screen now" in its own window (Record → Own window) */
+.detached-body{margin:0;background:#0c0f14;height:100vh;overflow:hidden}
+.detached{height:100vh;display:flex;flex-direction:column;color:var(--ink,#e8e6e1);font-family:inherit}
+.dt-head{display:flex;justify-content:space-between;align-items:center;padding:8px 16px;font-size:13px;color:var(--ink-2,#9aa3ad);border-bottom:1px solid var(--line,#1f2630)}
+.dt-head b{color:var(--ink,#e8e6e1)}
+.dt-slide{flex:1;min-height:0;display:grid;place-items:center;padding:16px}
+.dt-slide .slide{width:min(100%,calc((100vh - 72px)*16/9));box-shadow:0 10px 40px rgba(0,0,0,.45)}
+.dt-note{padding:10px 14px;margin:0}
+.side .ph .seg{margin-left:auto}

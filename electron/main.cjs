@@ -26,6 +26,18 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  // "On screen now" in its own window (Record, for a second monitor): it opens where you last put it.
+  win.webContents.setWindowOpenHandler(({ frameName }) => {
+    if (!frameName.startsWith("onscreen")) return { action: "allow" };
+    return { action: "allow", overrideBrowserWindowOptions: {
+      ...(readLast().onscreenBounds || { width: 1280, height: 760 }),
+      title: "On screen now", backgroundColor: "#0c0f14", autoHideMenuBar: true, minWidth: 320, minHeight: 200,
+    } };
+  });
+  win.webContents.on("did-create-window", (child, { frameName }) => {
+    if (!frameName.startsWith("onscreen")) return;
+    child.on("close", () => { if (!child.isMinimized() && !child.isMaximized()) writeLast({ onscreenBounds: child.getBounds() }); });
+  });
   if (isDev) win.loadURL("http://localhost:5173");
   else win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
 }
