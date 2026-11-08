@@ -89,30 +89,55 @@ async function exportCut(scriptPath, segs, onProgress, opts = {}) {
   const dir = takesDir(scriptPath);
   const base = scriptPath ? path.basename(scriptPath).replace(/\.[^.]+$/, "") : "cut";
   const out = path.join(dir, `${base}-cut.mp4`);
-  // One input per segment, cut with accurate input seeking (-ss/-t before -i).
-  const args = ["-y"];
-  const parts = [], labels = [];
-  const fade = 0.02;
-  segs.forEach((s, i) => {
-    const d = Math.max(0.05, s.end - s.start);
-    args.push("-ss", s.start.toFixed(3), "-t", d.toFixed(3), "-i", s.file);
-    parts.push(s.video
-      ? `[${i}:v]setpts=PTS-STARTPTS,fps=30,scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v${i}]`
-      : `color=c=black:s=1920x1080:r=30:d=${d.toFixed(3)},format=yuv420p,setsar=1[v${i}]`);
-    parts.push(`[${i}:a]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,apad,atrim=end=${d.toFixed(3)},afade=t=in:d=${fade},afade=t=out:st=${(d - fade).toFixed(3)}:d=${fade}[a${i}]`);
-    labels.push(`[v${i}][a${i}]`);
-  });
-  const graph = `${parts.join(";")};${labels.join("")}concat=n=${segs.length}:v=1:a=1[v][a]`;
-  const graphFile = path.join(dir, ".cut-graph.txt");
-  fs.writeFileSync(graphFile, graph); // long graphs overflow the Windows command line
-  args.push("-filter_complex_script", graphFile, "-map", "[v]", "-map", "[a]",
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out);
+  // One input per segment, cut with accurate input seeking (-ss/-t before -i). A whole lesson is
+  // hundreds of sentences: one command for all of them overflows the Windows command line
+  // (spawn ENAMETOOLONG) and opens hundreds of decoders, so it is made in parts of PART sentences
+  // (picture encoded, sound kept as PCM) and the parts are joined without re-encoding the picture.
+  const PART = 40;
   const total = segs.reduce((a, s) => a + (s.end - s.start), 0);
-  await ffmpeg(args, line => {
-    const m = /time=(\d+):(\d+):([\d.]+)/.exec(line);
-    if (m) onProgress(Math.min(1, (+m[1] * 3600 + +m[2] * 60 + +m[3]) / total));
-  });
-  try { fs.unlinkSync(graphFile); } catch { /* fine */ }
+  const fade = 0.02;
+  const rel = f => { const r = path.relative(dir, f); return r && !r.startsWith("..") && !path.isAbsolute(r) ? r : f; };
+  const stamp = Date.now();
+  const partFiles = [];
+  let done = 0;
+  try {
+    for (let p0 = 0; p0 < segs.length; p0 += PART) {
+      const chunk = segs.slice(p0, p0 + PART);
+      const args = ["-y"];
+      const parts = [], labels = [];
+      chunk.forEach((s, i) => {
+        const d = Math.max(0.05, s.end - s.start);
+        args.push("-ss", s.start.toFixed(3), "-t", d.toFixed(3), "-i", rel(s.file));
+        parts.push(s.video
+          ? `[${i}:v]setpts=PTS-STARTPTS,fps=30,scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p[v${i}]`
+          : `color=c=black:s=1920x1080:r=30:d=${d.toFixed(3)},format=yuv420p,setsar=1[v${i}]`);
+        parts.push(`[${i}:a]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,apad,atrim=end=${d.toFixed(3)},afade=t=in:d=${fade},afade=t=out:st=${(d - fade).toFixed(3)}:d=${fade}[a${i}]`);
+        labels.push(`[v${i}][a${i}]`);
+      });
+      const graphName = `.cut-graph-${stamp}.txt`;
+      fs.writeFileSync(path.join(dir, graphName), `${parts.join(";")};${labels.join("")}concat=n=${chunk.length}:v=1:a=1[v][a]`);
+      const partName = `.cut-part-${stamp}-${String(partFiles.length).padStart(3, "0")}.mkv`;
+      partFiles.push(partName);
+      args.push("-filter_complex_script", graphName, "-map", "[v]", "-map", "[a]",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-g", "60", "-c:a", "pcm_s16le", partName);
+      const chunkLen = chunk.reduce((a, s) => a + Math.max(0.05, s.end - s.start), 0);
+      await ffmpeg(args, line => {
+        const m = /time=(\d+):(\d+):([\d.]+)/.exec(line);
+        if (m) onProgress(Math.min(1, (done + Math.min(chunkLen, +m[1] * 3600 + +m[2] * 60 + +m[3])) / total) * 0.97);
+      }, dir);
+      try { fs.unlinkSync(path.join(dir, graphName)); } catch { /* fine */ }
+      done += chunkLen;
+    }
+    // Join the parts: the picture is copied, the sound encoded once (no gaps at the joins).
+    const listName = `.cut-list-${stamp}.txt`;
+    fs.writeFileSync(path.join(dir, listName), partFiles.map(f => `file '${f}'`).join("\n"));
+    await ffmpeg(["-y", "-f", "concat", "-safe", "0", "-i", listName, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", path.basename(out)], null, dir);
+    try { fs.unlinkSync(path.join(dir, listName)); } catch { /* fine */ }
+    onProgress(1);
+  } finally {
+    for (const f of partFiles) { try { fs.unlinkSync(path.join(dir, f)); } catch { /* fine */ } }
+    for (const f of fs.readdirSync(dir).filter(f => f.startsWith(`.cut-graph-${stamp}`))) { try { fs.unlinkSync(path.join(dir, f)); } catch { /* fine */ } }
+  }
   fs.writeFileSync(out.replace(/\.mp4$/, ".json"), JSON.stringify({ video: path.basename(out), seconds: +total.toFixed(2), segments: segs }, null, 2));
   // Captions: an .srt next to the video, and optionally a copy with them burnt in.
   let srt = null, captioned = null, captionError = "";
